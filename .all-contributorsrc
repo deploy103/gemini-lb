@@ -1532,6 +1532,17 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "deploy103",
+      "name": "코딩너무어렵",
+      "avatar_url": "https://avatars.githubusercontent.com/u/131563265?v=4",
+      "profile": "https://github.com/deploy103",
+      "contributions": [
+        "code",
+        "design",
+        "test"
+      ]
     }
   ],
   "contributorsPerLine": 7,

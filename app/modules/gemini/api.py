@@ -500,7 +500,8 @@ for prefix in ("", "/gemini"):
     for version in ("v1beta", "v1"):
         for suffix in ("/models", "/models/{resource:path}"):
             path = f"{prefix}/{version}{suffix}"
-            router.add_api_route(path, native_google, methods=["GET", "POST"], response_model=None)
+            for method in ("GET", "POST"):
+                router.add_api_route(path, native_google, methods=[method], response_model=None)
             router.add_api_route(
                 path + "/", native_google, methods=["GET", "POST"], response_model=None, include_in_schema=False
             )
@@ -514,7 +515,13 @@ for prefix in ("", "/gemini"):
     )
 
 for path in ("/v1beta/{resource:path}", "/gemini/v1beta/{resource:path}", "/gemini/v1/{resource:path}"):
-    router.add_api_route(path, native_google, methods=["GET", "POST", "PUT", "PATCH", "DELETE"], response_model=None)
+    router.add_api_route(
+        path,
+        native_google,
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        response_model=None,
+        include_in_schema=False,
+    )
 
 
 @router.get("/healthz", include_in_schema=False)

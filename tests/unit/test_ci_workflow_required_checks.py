@@ -66,6 +66,16 @@ def test_postgres_real_test_steps_still_run_only_for_backend_changes() -> None:
         assert step.lstrip().startswith("if: needs.changes.outputs.backend == 'true'")
 
 
+def test_postgres_runs_native_gemini_http_regressions_only_for_backend_changes() -> None:
+    pg_job = _job_block(_ci_workflow_text(), "test-postgres")
+
+    assert "CODEX_LB_TEST_DATABASE_URL: postgresql+asyncpg://" in pg_job
+    assert (
+        "if: needs.changes.outputs.backend == 'true'\n"
+        "        run: uv run pytest -q -ra --timeout=180 tests/integration/test_gemini_gateway.py"
+    ) in pg_job
+
+
 def test_dashboard_browser_smoke_covers_both_contract_sides_and_is_required() -> None:
     workflow = _ci_workflow_text()
     browser_job = _job_block(workflow, "dashboard-browser-smoke")
@@ -113,7 +123,8 @@ def test_rust_job_runs_native_routed_wire_probe_with_built_helper() -> None:
     assert "- rust" in required_job
 
 
-RELEASE_GUARDS_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "release-guards.yml"
+# Release automation remains inactive; preserve its archived upstream contract.
+RELEASE_GUARDS_WORKFLOW = Path(__file__).parents[2] / ".github" / "upstream-workflows" / "release-guards.yml"
 
 
 def _pull_request_trigger_types(text: str) -> set[str]:

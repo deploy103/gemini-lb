@@ -16,6 +16,7 @@ from app.modules.dashboard.schemas import (
     DashboardOverviewTimeframeKey,
     DashboardProjectionsResponse,
 )
+from app.modules.gemini.credentials import GEMINI_SOURCE_KINDS
 from app.modules.model_sources.catalog import source_models_to_upstream_models
 from app.modules.model_sources.repository import ModelSourcesRepository
 
@@ -57,8 +58,6 @@ async def get_projections(
 async def list_models() -> dict:
     registry = get_model_registry()
     models_by_slug = registry.get_models_with_fallback()
-    if not models_by_slug:
-        return {"models": []}
     allowed_efforts = {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
     def _normalize_effort(value: str | None) -> str | None:
@@ -86,20 +85,28 @@ async def list_models() -> dict:
         for slug, model in models_by_slug.items()
         if is_public_model(model, None)
     ]
-    # The API-key "allowed models" picker must offer OpenAI-compatible source
-    # models too, or source-scoped allowlists cannot be configured in the UI.
+    # Dashboard policy discovery includes Google without changing the shared
+    # OpenAI-facing catalog converter or transport selection.
     seen_slugs = set(models_by_slug)
     async with get_background_session() as session:
         sources = await ModelSourcesRepository(session).list_enabled_sources()
         detach_session_objects(session)
-    for source_model in source_models_to_upstream_models(sources):
-        if source_model.slug in seen_slugs:
+    configured = [(model.slug, model.display_name) for model in source_models_to_upstream_models(sources)]
+    configured.extend(
+        (model.model, model.display_name or model.model)
+        for source in sources
+        if source.kind in GEMINI_SOURCE_KINDS
+        for model in source.models
+        if model.is_enabled
+    )
+    for slug, name in configured:
+        if slug in seen_slugs:
             continue
-        seen_slugs.add(source_model.slug)
+        seen_slugs.add(slug)
         models.append(
             {
-                "id": source_model.slug,
-                "name": source_model.display_name or source_model.slug,
+                "id": slug,
+                "name": name or slug,
                 "sourceOnly": True,
             }
         )

@@ -20,6 +20,10 @@ The application SHALL retain upstream account management, client-key policies, a
 - **WHEN** an operator opens a retained management workflow
 - **THEN** its existing authorization and controls remain available
 
+#### Scenario: Configure a native model allowlist
+- **WHEN** an operator registers enabled Google models and opens the dashboard key-policy selector
+- **THEN** the configured models are selectable even if the Codex registry is empty, without entering the OpenAI catalog
+
 ### Requirement: Authenticate and isolate native Google sources
 Gemini API-key and Code Assist credentials SHALL be explicit encrypted model-source kinds. Every native Google request SHALL require a downstream gateway key independently of the Codex auth toggle. x-gemini-lb-key SHALL take precedence over a retained client Google bearer header. Routing SHALL enforce downstream model allowlists, source assignments, expiration, usage reservations and concurrency. Google credentials SHALL NOT enter Codex selection or OpenAI transports, and inbound credentials or arbitrary headers SHALL NOT be forwarded upstream.
 
