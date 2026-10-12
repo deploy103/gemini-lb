@@ -21,7 +21,7 @@
 ## 4. Delivery
 
 - [x] Run relevant backend/frontend suites, lint, type checks, package and build checks.
-- [ ] Validate OpenSpec changes; archive only verified completed work.
-- [ ] Review secrets and publication workflows, then publish to the authorized public repository and inspect CI.
+- [x] Validate OpenSpec changes; archive only verified completed work.
+- [x] Review secrets and publication workflows, then publish to the authorized public repository and inspect CI.
 
-Validation evidence and known baseline failures are recorded in the [capability context](../../specs/gemini-foundation/context.md). Strict spec/change validation passed; archive and cloud-delivery checks remain pending. Live Google validation and production migration are not performed.
+Validation evidence and known baseline failures are recorded in the [capability context](../../../specs/gemini-foundation/context.md). Strict spec/change validation passed, Windows publication was verified, and CI failures were investigated and repaired without removing checks. Canonical requirements were already consolidated in the main capability before archival. Current-head cloud results are available from the repository CI workflow. Live Google validation and production migration are not performed.
