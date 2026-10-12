@@ -1,20 +1,139 @@
-name: CI
+name: Gemini validation
+
 on:
   push:
+    branches: ["main"]
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  merge_group:
+
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  checks:
+    name: Lint, types, and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
-      - run: npm run format:check
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --dev --frozen
+      - run: make lint typecheck package
+      - run: npx --yes @fission-ai/openspec@1.11.0 validate --specs --strict
+
+  frontend:
+    name: Frontend lint, types, and full coverage tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: make frontend-lint frontend-typecheck frontend-test test-dashboard-browser-smoke
+
+  backend:
+    name: Backend (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - test-unit
+          - test-integration-core-1
+          - test-integration-core-2
+          - test-integration-core-3
+          - test-integration-bridge
+          - test-e2e
+          - migration-check
+    env:
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --dev --frozen
+      # No filtering of unit failures. Core shards verify the complete partition,
+      # including Gemini, model-source, API-key, and SQLite migration regressions.
+      - run: make ${{ matrix.target }}
+
+  postgres:
+    name: PostgreSQL contracts and native Gemini
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: codex_lb
+          POSTGRES_PASSWORD: codex_lb
+          POSTGRES_DB: codex_lb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U codex_lb -d codex_lb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CODEX_LB_TEST_DATABASE_URL: postgresql+asyncpg://codex_lb:codex_lb@127.0.0.1:5432/codex_lb
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: make test-postgres
+      - run: uv run pytest -q -ra --timeout=180 tests/integration/test_gemini_gateway.py
+      - run: make migration-check-postgres
+
+  rust:
+    name: Rust and native wire regression tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CODEX_LB_NATIVE_EGRESS_TEST_BINARY: ${{ github.workspace }}/target/debug/codex-lb-native-egress
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --dev --frozen
+      - run: make rust-check
+      - run: cargo build --locked -p codex-lb-egress-worker --bin codex-lb-native-egress
+      - run: uv run pytest -q -ra tests/integration/test_native_routed_egress.py tests/integration/test_native_sse_egress.py tests/integration/test_native_websocket_events.py tests/integration/test_native_usage_egress.py
