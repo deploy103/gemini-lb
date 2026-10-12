@@ -1,12 +1,73 @@
-node_modules/
-dist/
-data/
+# Project-specific
+refs/
+poc/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Env/config
 .env
 .env.*
-*.db
-*.db-shm
-*.db-wal
-secrets.json
-oauth_creds.json
-playwright-report/
-test-results/
+.envrc
+!.env.example
+.python-version
+
+# Build artifacts
+build/
+dist/
+site/
+/target/
+crates/**/target/
+app/static/
+deploy/helm/*/charts/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local
+.local/
+.worktrees/
+certs/
+
+.codex-lb/
+.sisyphus/
+
+.specstory/
+
+.agents/hooks/state/
+.agents/.personality_migration
+.agents/version.json
+.agents/log/
+.agents/scheduled_tasks.lock
+.venv
+
+# Local Responses traffic captures and generated parity reports
+scripts/traffic_analysis/output/*.jsonl
+scripts/traffic_analysis/output/*.json
+scripts/traffic_analysis/output/*.md
+scripts/traffic_analysis/output/*.txt
+!scripts/traffic_analysis/output/.gitkeep
+
+.omx/
+PROMPT.md
+SUMMARY.md
+DECISIONS.md
+.superpowers/
+.agents/worktrees/

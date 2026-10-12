@@ -1,125 +1,338 @@
+<!--
+About
+Codex/ChatGPT account load balancer & proxy with usage tracking, dashboard, and OpenCode-compatible endpoints
+
+Topics
+python oauth sqlalchemy dashboard load-balancer openai rate-limit api-proxy codex fastapi usage-tracking chatgpt opencode
+-->
+
 # gemini-lb
 
-Gemini API와 Code Assist 계정을 로컬에서 묶어 사용하는 셀프 호스팅 게이트웨이입니다. Soju06/codex-lb에서 영감을 받은 독립 구현이며, 포크나 기능 동등성을 주장하지 않습니다.
+![gemini-lb dashboard](docs/screenshots/dashboard.jpg)
 
-**0.1.0 초기 릴리스:** 지원 범위는 [contract](docs/contract.md)에 한정됩니다. 실제 Google 계정·과금·서비스와의 라이브 검증은 아직 하지 않았습니다. 로컬 테스트 성공은 Google 호환성 보증이 아닙니다. 본인에게 사용 권한이 있는 계정만 등록하고 Google 약관·할당량·조직 정책을 준수하세요. Code Assist는 비공개 API에 의존하므로 언제든 바뀔 수 있습니다.
+**English** | [简体中文](./README.zh-CN.md)
 
-```text
-Gemini CLI / native SDK
-  -> client key -> gemini-lb (127.0.0.1:2456)
-                    |-> API-key accounts -> Gemini API
-                    |-> OAuth accounts   -> Code Assist
-                    `-> SQLite + encrypted credentials
-Operator -> separate admin token -> dashboard /admin/*
-```
+Gemini API and Code Assist account-pooling gateway built directly on the MIT-licensed [codex-lb](https://github.com/Soju06/codex-lb) foundation. The original Python/FastAPI/SQLAlchemy backend, React frontend, uv/Bun/Make builds and tests are retained, with a Dither Kit operator interface.
 
-## 시작
+**Start with [Gemini setup, compatibility and legacy import](docs/gemini.md).** The upstream guides below describe retained Codex features, not a published Gemini package or image. Source provenance and limitations are documented explicitly.
 
-Node.js 24 이상이 필요합니다. CLI 인수로 비밀 값을 넘기지 말고, 권한을 제한한 파일을 사용하세요.
+## Features
 
-```sh
+<table>
+<tr>
+<td><b>Account Pooling</b><br>Load balance across multiple ChatGPT accounts</td>
+<td><b>Usage Tracking</b><br>Per-account tokens, cost, 28-day trends</td>
+<td><b>API Keys</b><br>Per-key rate limits by token, cost, window, model</td>
+</tr>
+<tr>
+<td><b>Dashboard Auth</b><br>Password + optional TOTP</td>
+<td><b>OpenAI-compatible</b><br>Codex CLI, OpenCode, any OpenAI client</td>
+<td><b>Auto Model Sync</b><br>Available models fetched from upstream</td>
+</tr>
+</table>
+
+| ![dashboard](docs/screenshots/dashboard.jpg) | ![accounts](docs/screenshots/accounts.jpg) |
+|:---:|:---:|
+
+## Quick Start
+
+```bash
 git clone https://github.com/deploy103/gemini-lb.git
 cd gemini-lb
-npm ci
-npm run build
-node dist/cli.js init
-# admin token과 기본 client key는 여기서 한 번만 출력됩니다. 안전하게 보관하세요.
-node dist/cli.js account add --name personal --project my-google-project --key-file /secure/api-key.txt
-node dist/cli.js account list
-node dist/cli.js key create --name laptop --accounts ACCOUNT_ID
-node dist/cli.js serve
+# Python >=3.13, uv, Bun 1.3.14 and make
+uv sync --dev --frozen
+make frontend-build
+uv run gemini-lb
 ```
 
-기본 데이터 디렉터리는 `~/.gemini-lb`, 리스너는 `127.0.0.1:2456`입니다. `init`, `serve`는 `--data-dir PATH`를 지원하며 `GEMINI_LB_DATA_DIR`로도 지정할 수 있습니다. `serve`는 `--host HOST --port PORT`를 지원합니다. `init`과 오프라인 계정 명령은 서버 실행 중 거부됩니다. 실행 중 변경은 별도 admin token으로 대시보드·관리 API를 사용하세요.
+Open [localhost:2455](http://localhost:2455), add a **Gemini API key** or **Gemini Code Assist OAuth** source under APIs, and create a separate downstream API key. Google credentials never double as gateway client keys. Configure model prices explicitly when using dollar limits.
 
-```sh
-node dist/cli.js account disable --id ACCOUNT_ID
-node dist/cli.js account enable --id ACCOUNT_ID
+Accessing the dashboard remotely for the first time? You need a one-time bootstrap token —
+see [Getting started](https://soju06.github.io/codex-lb/getting-started/).
+
+## Client Setup
+
+For native Gemini clients, use the gateway URL and its downstream key; see [the SDK and Code Assist examples](docs/gemini.md). The OpenAI endpoints below are retained for Codex/OpenAI-compatible sources; they do not translate Gemini into OpenAI responses. For Codex CLI, `~/.codex/config.toml`:
+
+```toml
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+model_provider = "codex-lb"
+
+[model_providers.codex-lb]
+name = "openai"  # required — enables remote /responses/compact. Lowercase since Codex 2026-05-23; older "OpenAI" stops resolving gpt-5.5
+base_url = "http://127.0.0.1:2455/backend-api/codex"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true # required for codex app
 ```
 
-### OAuth 계정
+| Logo | Client | Endpoint | Guide |
+|---|--------|----------|-------|
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="32" alt="OpenAI"> | **Codex CLI / IDE** | `http://127.0.0.1:2455/backend-api/codex` | [Client setup → Codex CLI](https://soju06.github.io/codex-lb/client-setup/#codex-cli-ide-extension) |
+| <img src="https://avatars.githubusercontent.com/u/66570915?s=200" width="32" alt="OpenCode (Anomaly)"> | **OpenCode** | `http://127.0.0.1:2455/v1` | [Client setup → OpenCode](https://soju06.github.io/codex-lb/client-setup/#opencode) |
+| <img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="32" alt="OpenClaw"> | **OpenClaw** | `http://127.0.0.1:2455/v1` | [Client setup → OpenClaw](https://soju06.github.io/codex-lb/client-setup/#openclaw) |
+| <img src="https://avatars.githubusercontent.com/u/134168893?s=200" width="32" alt="Hermes Agent (Nous Research)"> | **Hermes Agent** | `http://127.0.0.1:2455/v1` | [Client setup → Hermes Agent](https://soju06.github.io/codex-lb/client-setup/#hermes-agent) |
+| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="32" alt="Python"> | **OpenAI Python SDK** | `http://127.0.0.1:2455/v1` | [Client setup → Python SDK](https://soju06.github.io/codex-lb/client-setup/#openai-python-sdk) |
 
-먼저 공식 Gemini CLI에서 로그인·온보딩을 완료하세요. 0.1에는 브라우저 OAuth, 프록시 온보딩, Google 계정 변경 프록시 API가 없습니다. 로컬 풀 계정 관리는 admin API로 지원합니다.
+Remote clients need an [API key](https://soju06.github.io/codex-lb/api-keys/) created from the dashboard.
 
-```sh
-node dist/cli.js account import --name cli --project my-google-project --file /secure/oauth.json --oauth-client /secure/client.json
+## Configuration
+
+Environment variables with `CODEX_LB_` prefix or `.env.local` — see [`.env.example`](.env.example) and the
+[configuration guide](https://soju06.github.io/codex-lb/configuration/). SQLite is the default database backend;
+PostgreSQL is optional via `CODEX_LB_DATABASE_URL`.
+
+## Data
+
+| Environment | Path |
+|-------------|------|
+| Local source build | `~/.gemini-lb-v2/` |
+| Locally built Docker image | `/var/lib/codex-lb/gemini-lb-v2/` |
+
+Backup this directory to preserve your data. Legacy `~/.gemini-lb/` data stays untouched unless you explicitly run the offline importer; do not point this runtime at the old database.
+
+## Documentation
+
+Full docs live at **<https://soju06.github.io/codex-lb/>**:
+
+- [Getting started](https://soju06.github.io/codex-lb/getting-started/) — quick start, remote bootstrap token
+- [Client setup](https://soju06.github.io/codex-lb/client-setup/) — Codex CLI, OpenCode, OpenClaw, Python SDK
+- [Configuration](https://soju06.github.io/codex-lb/configuration/) — the few settings that matter
+- [Authentication](https://soju06.github.io/codex-lb/authentication/) — dashboard auth modes
+- [API keys](https://soju06.github.io/codex-lb/api-keys/) — protecting proxy routes
+- [Routing](https://soju06.github.io/codex-lb/routing/) — strategy guide
+- [Database](https://soju06.github.io/codex-lb/database/) — SQLite / PostgreSQL, Postgres 16 → 18 upgrade
+- [Deployment](https://soju06.github.io/codex-lb/deployment/docker/) — [Docker](https://soju06.github.io/codex-lb/deployment/docker/), [Kubernetes](https://soju06.github.io/codex-lb/deployment/kubernetes/), [remote access](https://soju06.github.io/codex-lb/deployment/remote/)
+- [Troubleshooting](https://soju06.github.io/codex-lb/troubleshooting/)
+
+### Community companions
+
+Independent projects that consume the dashboard API, maintained outside codex-lb
+(see [the docs listing](https://soju06.github.io/codex-lb/#community-companions)
+for access guidance):
+
+- [Codex LB Status Bar](https://github.com/sm1ee/codex-lb-statusbar) — native macOS app: account status, quota details, account controls
+- [codex-lb SwiftBar](https://github.com/joschi655/codex-lb-swiftbar) — read-only SwiftBar/Bun monitor for pool status and quota headroom
+- [Codex LB Status](https://github.com/VictorStatko/codex-lb-status) — read-only Ubuntu tray monitor for pooled quota, account health, reset credits, and update state
+- [Codex LB for Omarchy](https://github.com/janaki-sasidhar/omarchy-codex-lb) — read-only Linux/Omarchy Quattro bar plugin for account quotas, usage totals, reset times, and optional desktop alerts
+- [Codex-LB Rates](https://github.com/uniskela/codex-lb-rates) — Home Assistant integration for pool and per-account quota remaining sensors (5h / weekly / monthly)
+
+## Development
+
+```bash
+# Docker
+docker compose watch
+
+# Local
+uv sync && cd frontend && bun install && cd ..
+uv run codex-lb                              # backend :2455
+cd frontend && bun run dev                   # frontend :5173
+
+# Nix
+nix run .
+nix develop # enter dev environment
 ```
 
-가져오기는 원본 파일을 수정하지 않습니다. `access_token` + `expiry_date`만 있어도 사용할 수 있지만 갱신은 불가능합니다. 자동 갱신에는 `refresh_token`과 일치하는 `client_id` / `client_secret`이 필요합니다. 일반 CLI 캐시에는 OAuth 클라이언트 등록 정보가 없으므로 별도로 제공해야 합니다. `--oauth-client`는 Google에서 내려받은 `installed` 또는 `authorized_user` 클라이언트 JSON을 받습니다. 임의의 다른 클라이언트를 섞지 마세요. 만료·`invalid_grant` 상태는 올바른 자격 증명 재가져오기로 복구하세요.
+## Contributors ✨
 
-## 클라이언트 연결
+Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/en/reference/emoji-key/)):
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Soju06"><img src="https://avatars.githubusercontent.com/u/34199905?v=4?s=100" width="100px;" alt="Soju06"/><br /><sub><b>Soju06</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Soju06" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Soju06" title="Tests">⚠️</a> <a href="#maintenance-Soju06" title="Maintenance">🚧</a> <a href="#infra-Soju06" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://jonas.kamsker.at/"><img src="https://avatars.githubusercontent.com/u/11245306?v=4?s=100" width="100px;" alt="Jonas Kamsker"/><br /><sub><b>Jonas Kamsker</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=JKamsker" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3AJKamsker" title="Bug reports">🐛</a> <a href="#maintenance-JKamsker" title="Maintenance">🚧</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Quack6765"><img src="https://avatars.githubusercontent.com/u/5446230?v=4?s=100" width="100px;" alt="Quack"/><br /><sub><b>Quack</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Quack6765" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3AQuack6765" title="Bug reports">🐛</a> <a href="#maintenance-Quack6765" title="Maintenance">🚧</a> <a href="#design-Quack6765" title="Design">🎨</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/hhsw2015"><img src="https://avatars.githubusercontent.com/u/103614420?v=4?s=100" width="100px;" alt="Jill Kok, San Mou"/><br /><sub><b>Jill Kok, San Mou</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=hhsw2015" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=hhsw2015" title="Tests">⚠️</a> <a href="#maintenance-hhsw2015" title="Maintenance">🚧</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Ahhsw2015" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/pcy06"><img src="https://avatars.githubusercontent.com/u/44970486?v=4?s=100" width="100px;" alt="PARK CHANYOUNG"/><br /><sub><b>PARK CHANYOUNG</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=pcy06" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=pcy06" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=pcy06" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/choi138"><img src="https://avatars.githubusercontent.com/u/84369321?v=4?s=100" width="100px;" alt="Choi138"/><br /><sub><b>Choi138</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=choi138" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Achoi138" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=choi138" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dwnmf"><img src="https://avatars.githubusercontent.com/u/56194792?v=4?s=100" width="100px;" alt="LYA⚚CAP⚚OCEAN"/><br /><sub><b>LYA⚚CAP⚚OCEAN</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=dwnmf" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=dwnmf" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/azkore"><img src="https://avatars.githubusercontent.com/u/7746783?v=4?s=100" width="100px;" alt="Eugene Korekin"/><br /><sub><b>Eugene Korekin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=azkore" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Aazkore" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=azkore" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/JordxnBN"><img src="https://avatars.githubusercontent.com/u/259802500?v=4?s=100" width="100px;" alt="jordan"/><br /><sub><b>jordan</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=JordxnBN" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3AJordxnBN" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=JordxnBN" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/DOCaCola"><img src="https://avatars.githubusercontent.com/u/2077396?v=4?s=100" width="100px;" alt="DOCaCola"/><br /><sub><b>DOCaCola</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/issues?q=author%3ADOCaCola" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=DOCaCola" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=DOCaCola" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/joeblack2k"><img src="https://avatars.githubusercontent.com/u/3456102?v=4?s=100" width="100px;" alt="JoeBlack2k"/><br /><sub><b>JoeBlack2k</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=joeblack2k" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Ajoeblack2k" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=joeblack2k" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ink-splatters"><img src="https://avatars.githubusercontent.com/u/2706884?v=4?s=100" width="100px;" alt="Peter A."/><br /><sub><b>Peter A.</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ink-splatters" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ink-splatters" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Aink-splatters" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/xCatalitY"><img src="https://avatars.githubusercontent.com/u/74815681?v=4?s=100" width="100px;" alt="Hannah Markfort"/><br /><sub><b>Hannah Markfort</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=xCatalitY" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=xCatalitY" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mws-weekend-projects"><img src="https://avatars.githubusercontent.com/u/255546191?v=4?s=100" width="100px;" alt="mws-weekend-projects"/><br /><sub><b>mws-weekend-projects</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mws-weekend-projects" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mws-weekend-projects" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="http://hextra.us"><img src="https://avatars.githubusercontent.com/u/88663250?v=4?s=100" width="100px;" alt="Quang Do"/><br /><sub><b>Quang Do</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=quangdo126" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=quangdo126" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/aaiyer"><img src="https://avatars.githubusercontent.com/u/426027?v=4?s=100" width="100px;" alt="Anand Aiyer"/><br /><sub><b>Anand Aiyer</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/issues?q=author%3Aaaiyer" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=aaiyer" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=aaiyer" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/defin85"><img src="https://avatars.githubusercontent.com/u/31535407?v=4?s=100" width="100px;" alt="defin85"/><br /><sub><b>defin85</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=defin85" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Adefin85" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=defin85" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://linktree.huzky.dev/"><img src="https://avatars.githubusercontent.com/u/194083329?v=4?s=100" width="100px;" alt="Jacky Fong"/><br /><sub><b>Jacky Fong</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=huzky-v" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Ahuzky-v" title="Bug reports">🐛</a> <a href="#question-huzky-v" title="Answering Questions">💬</a> <a href="#maintenance-huzky-v" title="Maintenance">🚧</a> <a href="https://github.com/Soju06/codex-lb/commits?author=huzky-v" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/flokosti96"><img src="https://avatars.githubusercontent.com/u/144428350?v=4?s=100" width="100px;" alt="flokosti96"/><br /><sub><b>flokosti96</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=flokosti96" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=flokosti96" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/minpeter"><img src="https://avatars.githubusercontent.com/u/62207008?v=4?s=100" width="100px;" alt="Woonggi Min"/><br /><sub><b>Woonggi Min</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=minpeter" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=minpeter" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/yigitkonur/"><img src="https://avatars.githubusercontent.com/u/9989650?v=4?s=100" width="100px;" alt="Yigit Konur"/><br /><sub><b>Yigit Konur</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/issues?q=author%3Ayigitkonur" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=yigitkonur" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Daltonganger"><img src="https://avatars.githubusercontent.com/u/17501732?v=4?s=100" width="100px;" alt="Ruben"/><br /><sub><b>Ruben</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Daltonganger" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Daltonganger" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3ADaltonganger" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/L1st3r"><img src="https://avatars.githubusercontent.com/u/336408?v=4?s=100" width="100px;" alt="Steve Santacroce"/><br /><sub><b>Steve Santacroce</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=L1st3r" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=L1st3r" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3AL1st3r" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mhughdo"><img src="https://avatars.githubusercontent.com/u/15611134?v=4?s=100" width="100px;" alt="Hugh Do"/><br /><sub><b>Hugh Do</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mhughdo" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mhughdo" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/salwinh"><img src="https://avatars.githubusercontent.com/u/6965142?v=4?s=100" width="100px;" alt="Hubert Salwin"/><br /><sub><b>Hubert Salwin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=salwinh" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=salwinh" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Daeroni"><img src="https://avatars.githubusercontent.com/u/1648961?v=4?s=100" width="100px;" alt="Teemu Koskinen"/><br /><sub><b>Teemu Koskinen</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Daeroni" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://felixypz.me"><img src="https://avatars.githubusercontent.com/u/151984457?v=4?s=100" width="100px;" alt="Yu Peng Zheng"/><br /><sub><b>Yu Peng Zheng</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Felix201209" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Felix201209" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/embogomolov"><img src="https://avatars.githubusercontent.com/u/185256086?v=4?s=100" width="100px;" alt="embogomolov"/><br /><sub><b>embogomolov</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=embogomolov" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=embogomolov" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/SHAREN"><img src="https://avatars.githubusercontent.com/u/6128858?v=4?s=100" width="100px;" alt="Renat Sharipov"/><br /><sub><b>Renat Sharipov</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=SHAREN" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=SHAREN" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://ximatai.net"><img src="https://avatars.githubusercontent.com/u/1785495?v=4?s=100" width="100px;" alt="Liu Rui"/><br /><sub><b>Liu Rui</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=aruis" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=aruis" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=aruis" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Aaruis" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/OverHash"><img src="https://avatars.githubusercontent.com/u/46231745?v=4?s=100" width="100px;" alt="OverHash"/><br /><sub><b>OverHash</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=OverHash" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=OverHash" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Kazet111"><img src="https://avatars.githubusercontent.com/u/21245898?v=4?s=100" width="100px;" alt="Kazet"/><br /><sub><b>Kazet</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Kazet111" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Kazet111" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://balakumar.dev"><img src="https://avatars.githubusercontent.com/u/20134279?v=4?s=100" width="100px;" alt="Bala Kumar"/><br /><sub><b>Bala Kumar</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=balakumardev" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=balakumardev" title="Tests">⚠️</a> <a href="#ideas-balakumardev" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ihazgithub"><img src="https://avatars.githubusercontent.com/u/129220128?v=4?s=100" width="100px;" alt="ihazgithub"/><br /><sub><b>ihazgithub</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ihazgithub" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ihazgithub" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/stemirkhan"><img src="https://avatars.githubusercontent.com/u/99467693?v=4?s=100" width="100px;" alt="Temirkhan"/><br /><sub><b>Temirkhan</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=stemirkhan" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=stemirkhan" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=stemirkhan" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Astemirkhan" title="Bug reports">🐛</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/tobwen"><img src="https://avatars.githubusercontent.com/u/1864057?v=4?s=100" width="100px;" alt="tobwen"/><br /><sub><b>tobwen</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=tobwen" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=tobwen" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Atobwen" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/rio-jeong"><img src="https://avatars.githubusercontent.com/u/193858009?v=4?s=100" width="100px;" alt="Rio"/><br /><sub><b>Rio</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=rio-jeong" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Ario-jeong" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=rio-jeong" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://mikabytes.com"><img src="https://avatars.githubusercontent.com/u/1054229?v=4?s=100" width="100px;" alt="Mika"/><br /><sub><b>Mika</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mikabytes" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mikabytes" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mikabytes" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://maumap.com/"><img src="https://avatars.githubusercontent.com/u/810638?v=4?s=100" width="100px;" alt="Darafei Praliaskouski"/><br /><sub><b>Darafei Praliaskouski</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Komzpa" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Komzpa" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Komzpa" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3AKomzpa" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://t.me/e1ektr0"><img src="https://avatars.githubusercontent.com/u/6214170?v=4?s=100" width="100px;" alt="Maxim Feofilov"/><br /><sub><b>Maxim Feofilov</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=e1ektr0" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=e1ektr0" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/klaascommerce"><img src="https://avatars.githubusercontent.com/u/264425820?v=4?s=100" width="100px;" alt="klaascommerce"/><br /><sub><b>klaascommerce</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=klaascommerce" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=klaascommerce" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/JeffKandt"><img src="https://avatars.githubusercontent.com/u/31992445?v=4?s=100" width="100px;" alt="JeffKandt"/><br /><sub><b>JeffKandt</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=JeffKandt" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/pulls?q=is%3Apr+reviewed-by%3AJeffKandt" title="Reviewed Pull Requests">👀</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ozpool"><img src="https://avatars.githubusercontent.com/u/151670776?v=4?s=100" width="100px;" alt="ozpool"/><br /><sub><b>ozpool</b></sub></a><br /><a href="#ideas-ozpool" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ozpool" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ozpool" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ozpool" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mgwals"><img src="https://avatars.githubusercontent.com/u/155856544?v=4?s=100" width="100px;" alt="Manu"/><br /><sub><b>Manu</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mgwals" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/pulls?q=is%3Apr+reviewed-by%3Amgwals" title="Reviewed Pull Requests">👀</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://pgflow.dev"><img src="https://avatars.githubusercontent.com/u/9126?v=4?s=100" width="100px;" alt="Wojtek Majewski"/><br /><sub><b>Wojtek Majewski</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=jumski" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://www.linkedin.com/in/andrewnoblescm"><img src="https://avatars.githubusercontent.com/u/211227905?v=4?s=100" width="100px;" alt="Andrew Noble"/><br /><sub><b>Andrew Noble</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=AnobleSCM" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=AnobleSCM" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://jgorostegui.github.io/"><img src="https://avatars.githubusercontent.com/u/9865435?v=4?s=100" width="100px;" alt="Josu Gorostegui"/><br /><sub><b>Josu Gorostegui</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=jgorostegui" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=jgorostegui" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/linusmixson"><img src="https://avatars.githubusercontent.com/u/7087013?v=4?s=100" width="100px;" alt="Linus Mixson"/><br /><sub><b>Linus Mixson</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=linusmixson" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=linusmixson" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/timefox"><img src="https://avatars.githubusercontent.com/u/5635109?v=4?s=100" width="100px;" alt="timefox"/><br /><sub><b>timefox</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=timefox" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=timefox" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Lotfree618"><img src="https://avatars.githubusercontent.com/u/91266981?v=4?s=100" width="100px;" alt="Lotfree"/><br /><sub><b>Lotfree</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Lotfree618" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Lotfree618" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Lotfree618" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3ALotfree618" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://datfooldive.github.io/"><img src="https://avatars.githubusercontent.com/u/110718021?v=4?s=100" width="100px;" alt="hikki"/><br /><sub><b>hikki</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=datfooldive" title="Code">💻</a> <a href="#design-datfooldive" title="Design">🎨</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kramarb"><img src="https://avatars.githubusercontent.com/u/9120027?v=4?s=100" width="100px;" alt="Miha Orazem"/><br /><sub><b>Miha Orazem</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=kramarb" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=kramarb" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Pablosinyores"><img src="https://avatars.githubusercontent.com/u/150948502?v=4?s=100" width="100px;" alt="Nikhil"/><br /><sub><b>Nikhil</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Pablosinyores" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Pablosinyores" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/onlysdesign-ui"><img src="https://avatars.githubusercontent.com/u/251030415?v=4?s=100" width="100px;" alt="onlysdesign-ui"/><br /><sub><b>onlysdesign-ui</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=onlysdesign-ui" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=onlysdesign-ui" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/minh-dng"><img src="https://avatars.githubusercontent.com/u/73318601?v=4?s=100" width="100px;" alt="Steven (Minh) Dang"/><br /><sub><b>Steven (Minh) Dang</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=minh-dng" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/1llu5ion"><img src="https://avatars.githubusercontent.com/u/23450032?v=4?s=100" width="100px;" alt="Nataprom"/><br /><sub><b>Nataprom</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=1llu5ion" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=1llu5ion" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Iweisc"><img src="https://avatars.githubusercontent.com/u/179300695?v=4?s=100" width="100px;" alt="Iweisc"/><br /><sub><b>Iweisc</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Iweisc" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Iweisc" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/mahir-ozdin/"><img src="https://avatars.githubusercontent.com/u/9491185?v=4?s=100" width="100px;" alt="Mahir Taha Özdin"/><br /><sub><b>Mahir Taha Özdin</b></sub></a><br /><a href="#ideas-mahirozdin" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mahirozdin" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mahirozdin" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ramhaidar"><img src="https://avatars.githubusercontent.com/u/49301219?v=4?s=100" width="100px;" alt="ram/haidar"/><br /><sub><b>ram/haidar</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ramhaidar" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://rtx09x.github.io/"><img src="https://avatars.githubusercontent.com/u/187954595?v=4?s=100" width="100px;" alt="Rudra Tiwari"/><br /><sub><b>Rudra Tiwari</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Rtx09x" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/wuchao05"><img src="https://avatars.githubusercontent.com/u/97175999?v=4?s=100" width="100px;" alt="Wu Chao"/><br /><sub><b>Wu Chao</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=wuchao05" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/zwd0313"><img src="https://avatars.githubusercontent.com/u/159164983?v=4?s=100" width="100px;" alt="zwd0313"/><br /><sub><b>zwd0313</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=zwd0313" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mastertyko"><img src="https://avatars.githubusercontent.com/u/11311479?v=4?s=100" width="100px;" alt="mastertyko"/><br /><sub><b>mastertyko</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mastertyko" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mastertyko" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/diogenesc"><img src="https://avatars.githubusercontent.com/u/22321454?v=4?s=100" width="100px;" alt="Diógenes Castro"/><br /><sub><b>Diógenes Castro</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=diogenesc" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=diogenesc" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jhordanjw123"><img src="https://avatars.githubusercontent.com/u/123907587?v=4?s=100" width="100px;" alt="jhordanjw123"/><br /><sub><b>jhordanjw123</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=jhordanjw123" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=jhordanjw123" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/abarsegov"><img src="https://avatars.githubusercontent.com/u/181010154?v=4?s=100" width="100px;" alt="abarsegov"/><br /><sub><b>abarsegov</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=abarsegov" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/KakatkarAkshay"><img src="https://avatars.githubusercontent.com/u/49910222?v=4?s=100" width="100px;" alt="Akshay Kakatkar"/><br /><sub><b>Akshay Kakatkar</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=KakatkarAkshay" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=KakatkarAkshay" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/NeoClaw"><img src="https://avatars.githubusercontent.com/u/261536598?v=4?s=100" width="100px;" alt="NeoClaw"/><br /><sub><b>NeoClaw</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=neoclaw" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/plastictaste"><img src="https://avatars.githubusercontent.com/u/261646970?v=4?s=100" width="100px;" alt="plastictaste"/><br /><sub><b>plastictaste</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=plastictaste" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=plastictaste" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=plastictaste" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/softkleenex"><img src="https://avatars.githubusercontent.com/u/92619941?v=4?s=100" width="100px;" alt="softkleenex"/><br /><sub><b>softkleenex</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=softkleenex" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=softkleenex" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/n3crosis"><img src="https://avatars.githubusercontent.com/u/11072158?v=4?s=100" width="100px;" alt="n3crosis"/><br /><sub><b>n3crosis</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=n3crosis" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=n3crosis" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/geoHeil"><img src="https://avatars.githubusercontent.com/u/1694964?v=4?s=100" width="100px;" alt="geoHeil"/><br /><sub><b>geoHeil</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=geoHeil" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=geoHeil" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/copilot"><img src="https://github.com/copilot.png?s=100" width="100px;" alt="copilot"/><br /><sub><b>copilot</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=copilot" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mercenarioZ"><img src="https://avatars.githubusercontent.com/u/122884010?v=4?s=100" width="100px;" alt="mercenarioZ"/><br /><sub><b>mercenarioZ</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mercenarioZ" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mercenarioZ" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/rupebac"><img src="https://avatars.githubusercontent.com/u/452231?v=4?s=100" width="100px;" alt="Rubén Pérez Bachiller"/><br /><sub><b>Rubén Pérez Bachiller</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=rupebac" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=rupebac" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Arupebac" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/WangErgouaaaa"><img src="https://avatars.githubusercontent.com/u/117421439?v=4?s=100" width="100px;" alt="Guanwei Chen"/><br /><sub><b>Guanwei Chen</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=WangErgouaaaa" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=WangErgouaaaa" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ellentane"><img src="https://avatars.githubusercontent.com/u/70338266?v=4?s=100" width="100px;" alt="Jonáš Sivek"/><br /><sub><b>Jonáš Sivek</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ellentane" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ellentane" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/LuoYe17"><img src="https://avatars.githubusercontent.com/u/191728117?v=4?s=100" width="100px;" alt="落叶"/><br /><sub><b>落叶</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=LuoYe17" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=LuoYe17" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=LuoYe17" title="Tests">⚠️</a> <a href="#translation-LuoYe17" title="Translation">🌍</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jawwadfirdousi"><img src="https://avatars.githubusercontent.com/u/10913083?v=4?s=100" width="100px;" alt="jawwadfirdousi"/><br /><sub><b>jawwadfirdousi</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=jawwadfirdousi" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=jawwadfirdousi" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/qdzsh"><img src="https://avatars.githubusercontent.com/u/287790998?v=4?s=100" width="100px;" alt="Quang Do"/><br /><sub><b>Quang Do</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=qdzsh" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=qdzsh" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/zvladru"><img src="https://avatars.githubusercontent.com/u/30793959?v=4?s=100" width="100px;" alt="zvladru"/><br /><sub><b>zvladru</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=zvladru" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=zvladru" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/codemoo"><img src="https://avatars.githubusercontent.com/u/16550088?v=4?s=100" width="100px;" alt="Hwanmoo Yong"/><br /><sub><b>Hwanmoo Yong</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=codemoo" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=codemoo" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/alzeiby"><img src="https://avatars.githubusercontent.com/u/183951656?v=4?s=100" width="100px;" alt="Abdullah Alzeiby"/><br /><sub><b>Abdullah Alzeiby</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=alzeiby" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=alzeiby" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/0xSolarPunk"><img src="https://avatars.githubusercontent.com/u/151763538?v=4?s=100" width="100px;" alt="anime girl"/><br /><sub><b>anime girl</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=0xSolarPunk" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=0xSolarPunk" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/evaldass"><img src="https://avatars.githubusercontent.com/u/10763305?v=4?s=100" width="100px;" alt="evaldass"/><br /><sub><b>evaldass</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=evaldass" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=evaldass" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/claude"><img src="https://avatars.githubusercontent.com/u/81847?v=4?s=100" width="100px;" alt="Claude"/><br /><sub><b>Claude</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=claude" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/luawl"><img src="https://avatars.githubusercontent.com/u/252236154?v=4?s=100" width="100px;" alt="luawl"/><br /><sub><b>luawl</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=luawl" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=luawl" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kevinWangSheng"><img src="https://avatars.githubusercontent.com/u/118158941?v=4?s=100" width="100px;" alt="Shawn"/><br /><sub><b>Shawn</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=kevinWangSheng" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/nazirulhafiy"><img src="https://avatars.githubusercontent.com/u/255521226?v=4?s=100" width="100px;" alt="Hafiy"/><br /><sub><b>Hafiy</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=nazirulhafiy" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=nazirulhafiy" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=nazirulhafiy" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/zepx"><img src="https://avatars.githubusercontent.com/u/1377772?v=4?s=100" width="100px;" alt="Choong Jun Jin"/><br /><sub><b>Choong Jun Jin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=zepx" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=zepx" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/knightcn1983"><img src="https://avatars.githubusercontent.com/u/66906018?v=4?s=100" width="100px;" alt="knightcn1983"/><br /><sub><b>knightcn1983</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=knightcn1983" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=knightcn1983" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kvz"><img src="https://avatars.githubusercontent.com/u/26752?v=4?s=100" width="100px;" alt="Kevin van Zonneveld"/><br /><sub><b>Kevin van Zonneveld</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=kvz" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/leventov"><img src="https://avatars.githubusercontent.com/u/609240?v=4?s=100" width="100px;" alt="Roman Leventov"/><br /><sub><b>Roman Leventov</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=leventov" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://t.me/Tofighi_Times"><img src="https://avatars.githubusercontent.com/u/3256261?v=4?s=100" width="100px;" alt="AliReza Tofighi"/><br /><sub><b>AliReza Tofighi</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ATofighi" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dmdfami"><img src="https://avatars.githubusercontent.com/u/222630288?v=4?s=100" width="100px;" alt="DOMANHDUC"/><br /><sub><b>DOMANHDUC</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=dmdfami" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/HeroOfOdyssey"><img src="https://avatars.githubusercontent.com/u/144704328?v=4?s=100" width="100px;" alt="Kwan Perry"/><br /><sub><b>Kwan Perry</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=HeroOfOdyssey" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jamesx0416"><img src="https://avatars.githubusercontent.com/u/105842516?v=4?s=100" width="100px;" alt="James"/><br /><sub><b>James</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=jamesx0416" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=jamesx0416" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mereyabdenbekuly-ctrl"><img src="https://avatars.githubusercontent.com/u/234955825?v=4?s=100" width="100px;" alt="SSY"/><br /><sub><b>SSY</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mereyabdenbekuly-ctrl" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mereyabdenbekuly-ctrl" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mereyabdenbekuly-ctrl" title="Documentation">📖</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/fozbek"><img src="https://avatars.githubusercontent.com/u/17993880?v=4?s=100" width="100px;" alt="Fatih Özbek"/><br /><sub><b>Fatih Özbek</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=fozbek" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=fozbek" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ShiroKSH"><img src="https://avatars.githubusercontent.com/u/218489957?v=4?s=100" width="100px;" alt="Kushida"/><br /><sub><b>Kushida</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ShiroKSH" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ShiroKSH" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/aididhaiqal"><img src="https://avatars.githubusercontent.com/u/10329190?v=4?s=100" width="100px;" alt="Aidid Haiqal"/><br /><sub><b>Aidid Haiqal</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=aididhaiqal" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=aididhaiqal" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/yshishenya"><img src="https://avatars.githubusercontent.com/u/22071972?v=4?s=100" width="100px;" alt="yshishenya"/><br /><sub><b>yshishenya</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=yshishenya" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/alchemistkiv"><img src="https://avatars.githubusercontent.com/u/93935225?v=4?s=100" width="100px;" alt="alchemistkiv"/><br /><sub><b>alchemistkiv</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=alchemistkiv" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=alchemistkiv" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mhooooo"><img src="https://avatars.githubusercontent.com/u/142386428?v=4?s=100" width="100px;" alt="mhooooo"/><br /><sub><b>mhooooo</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mhooooo" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mhooooo" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/crowscc"><img src="https://avatars.githubusercontent.com/u/17800561?v=4?s=100" width="100px;" alt="crowscc"/><br /><sub><b>crowscc</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=crowscc" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="http://expressthisout.com/"><img src="https://avatars.githubusercontent.com/u/1113851?v=4?s=100" width="100px;" alt="Syakur Rahman"/><br /><sub><b>Syakur Rahman</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=shaqman" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=shaqman" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/cigro-manager"><img src="https://avatars.githubusercontent.com/u/219247995?v=4?s=100" width="100px;" alt="cigro-manager"/><br /><sub><b>cigro-manager</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=cigro-manager" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/lkraider"><img src="https://avatars.githubusercontent.com/u/52256?v=4?s=100" width="100px;" alt="Paul Eipper"/><br /><sub><b>Paul Eipper</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=lkraider" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=lkraider" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=lkraider" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ret2basic"><img src="https://avatars.githubusercontent.com/u/59381775?v=4?s=100" width="100px;" alt="ret2basic.eth"/><br /><sub><b>ret2basic.eth</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ret2basic" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=ret2basic" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/yeongjun-cigro"><img src="https://avatars.githubusercontent.com/u/260819931?v=4?s=100" width="100px;" alt="유영준"/><br /><sub><b>유영준</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=yeongjun-cigro" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=yeongjun-cigro" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mrnaturalmonopoly-prog"><img src="https://avatars.githubusercontent.com/u/309156020?v=4?s=100" width="100px;" alt="mrnaturalmonopoly-prog"/><br /><sub><b>mrnaturalmonopoly-prog</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mrnaturalmonopoly-prog" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mrnaturalmonopoly-prog" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mrunnaturalmonopoly-svg"><img src="https://avatars.githubusercontent.com/u/308138851?v=4?s=100" width="100px;" alt="mrunnaturalmonopoly-svg"/><br /><sub><b>mrunnaturalmonopoly-svg</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mrunnaturalmonopoly-svg" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mrunnaturalmonopoly-svg" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/HulianBuligon"><img src="https://avatars.githubusercontent.com/u/205309211?v=4?s=100" width="100px;" alt="HulianBuligon"/><br /><sub><b>HulianBuligon</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=HulianBuligon" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=HulianBuligon" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/joschi655"><img src="https://avatars.githubusercontent.com/u/183807437?v=4?s=100" width="100px;" alt="joschi655"/><br /><sub><b>joschi655</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=joschi655" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=joschi655" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/johnjheejin"><img src="https://avatars.githubusercontent.com/u/11205554?v=4?s=100" width="100px;" alt="daydreamer.jin"/><br /><sub><b>daydreamer.jin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=johnjheejin" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=johnjheejin" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=johnjheejin" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/rknightion"><img src="https://avatars.githubusercontent.com/u/12484127?v=4?s=100" width="100px;" alt="rknightion"/><br /><sub><b>rknightion</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=rknightion" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=rknightion" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/glopyglerky"><img src="https://avatars.githubusercontent.com/u/189872235?v=4?s=100" width="100px;" alt="glopyglerky"/><br /><sub><b>glopyglerky</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=glopyglerky" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=glopyglerky" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/iqbalmaulana03"><img src="https://avatars.githubusercontent.com/u/78488507?v=4?s=100" width="100px;" alt="Ahmad Maulana Iqbal"/><br /><sub><b>Ahmad Maulana Iqbal</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=iqbalmaulana03" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=iqbalmaulana03" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Dvredin"><img src="https://avatars.githubusercontent.com/u/32620766?v=4?s=100" width="100px;" alt="Dvredin"/><br /><sub><b>Dvredin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Dvredin" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kidclone3"><img src="https://avatars.githubusercontent.com/u/54184969?v=4?s=100" width="100px;" alt="DuyBui"/><br /><sub><b>DuyBui</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=kidclone3" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=kidclone3" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kevinsslin"><img src="https://avatars.githubusercontent.com/u/86810837?v=4?s=100" width="100px;" alt="Kevin Lin"/><br /><sub><b>Kevin Lin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=kevinsslin" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=kevinsslin" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Borealin"><img src="https://avatars.githubusercontent.com/u/41241077?v=4?s=100" width="100px;" alt="Borealin"/><br /><sub><b>Borealin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Borealin" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Borealin" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/NikitaMGrimm"><img src="https://avatars.githubusercontent.com/u/65914808?v=4?s=100" width="100px;" alt="Nikita Maximilian Grimm"/><br /><sub><b>Nikita Maximilian Grimm</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=NikitaMGrimm" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=NikitaMGrimm" title="Documentation">📖</a> <a href="https://github.com/Soju06/codex-lb/commits?author=NikitaMGrimm" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/BrenticusMaximus"><img src="https://avatars.githubusercontent.com/u/32489248?v=4?s=100" width="100px;" alt="BrenticusMaximus"/><br /><sub><b>BrenticusMaximus</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=BrenticusMaximus" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=BrenticusMaximus" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/sakthimaran-venom"><img src="https://avatars.githubusercontent.com/u/233523816?v=4?s=100" width="100px;" alt="Sakthimaran"/><br /><sub><b>Sakthimaran</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=sakthimaran-venom" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=sakthimaran-venom" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/evan-choi"><img src="https://avatars.githubusercontent.com/u/9690415?v=4?s=100" width="100px;" alt="Evan"/><br /><sub><b>Evan</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=evan-choi" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://chaoxu.prof/"><img src="https://avatars.githubusercontent.com/u/18860?v=4?s=100" width="100px;" alt="Chao Xu"/><br /><sub><b>Chao Xu</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=chaoxu" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=chaoxu" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/zenasharp"><img src="https://avatars.githubusercontent.com/u/170236008?v=4?s=100" width="100px;" alt="zenasharp"/><br /><sub><b>zenasharp</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=zenasharp" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=zenasharp" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=zenasharp" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/hanseo0507"><img src="https://avatars.githubusercontent.com/u/56479293?v=4?s=100" width="100px;" alt="HanSu Lee"/><br /><sub><b>HanSu Lee</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=hanseo0507" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=hanseo0507" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dpearson2699"><img src="https://avatars.githubusercontent.com/u/32114370?v=4?s=100" width="100px;" alt="Derek Pearson"/><br /><sub><b>Derek Pearson</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=dpearson2699" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/JustYannicc"><img src="https://avatars.githubusercontent.com/u/52761674?v=4?s=100" width="100px;" alt="JustYannicc"/><br /><sub><b>JustYannicc</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=JustYannicc" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=JustYannicc" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=JustYannicc" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/yigengjiang"><img src="https://avatars.githubusercontent.com/u/114665402?v=4?s=100" width="100px;" alt="ygx"/><br /><sub><b>ygx</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=yigengjiang" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=yigengjiang" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/aaravrav"><img src="https://avatars.githubusercontent.com/u/37036762?v=4?s=100" width="100px;" alt="Aarav"/><br /><sub><b>Aarav</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=aaravrav" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Evan-Haug"><img src="https://avatars.githubusercontent.com/u/90289817?v=4?s=100" width="100px;" alt="Evan Haug"/><br /><sub><b>Evan Haug</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Evan-Haug" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Evan-Haug" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/hongzexin"><img src="https://avatars.githubusercontent.com/u/136784169?v=4?s=100" width="100px;" alt="Jason HONG"/><br /><sub><b>Jason HONG</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=hongzexin" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/msmahdinejad"><img src="https://avatars.githubusercontent.com/u/154900233?v=4?s=100" width="100px;" alt="Mohammad Saleh Mahdinejad"/><br /><sub><b>Mohammad Saleh Mahdinejad</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=msmahdinejad" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=msmahdinejad" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Amsmahdinejad" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=msmahdinejad" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/MIlhamDedi"><img src="https://avatars.githubusercontent.com/u/29776899?v=4?s=100" width="100px;" alt="Muhammad Ilham Dedi"/><br /><sub><b>Muhammad Ilham Dedi</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=MIlhamDedi" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3AMIlhamDedi" title="Bug reports">🐛</a> <a href="https://github.com/Soju06/codex-lb/commits?author=MIlhamDedi" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/VictorStatko"><img src="https://avatars.githubusercontent.com/u/34319599?v=4?s=100" width="100px;" alt="Victor Statko"/><br /><sub><b>Victor Statko</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=VictorStatko" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/janaki-sasidhar"><img src="https://avatars.githubusercontent.com/u/42799643?v=4?s=100" width="100px;" alt="flameboy"/><br /><sub><b>flameboy</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=janaki-sasidhar" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/elmakus"><img src="https://avatars.githubusercontent.com/u/76910687?v=4?s=100" width="100px;" alt="elmakus"/><br /><sub><b>elmakus</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=elmakus" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=elmakus" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Aelmakus" title="Bug reports">🐛</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Abaddollyon"><img src="https://avatars.githubusercontent.com/u/31712865?v=4?s=100" width="100px;" alt="Abaddollyon"/><br /><sub><b>Abaddollyon</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=Abaddollyon" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=Abaddollyon" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mjakl"><img src="https://avatars.githubusercontent.com/u/40384?v=4?s=100" width="100px;" alt="Markus Jakl"/><br /><sub><b>Markus Jakl</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mjakl" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mjakl" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/issues?q=author%3Amjakl" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/uniskela"><img src="https://avatars.githubusercontent.com/u/104075208?v=4?s=100" width="100px;" alt="Uniskela"/><br /><sub><b>Uniskela</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=uniskela" title="Documentation">📖</a></td>
+    </tr>
+  </tbody>
+</table>
 
-아래 값은 예시 자리표시자입니다. 실제 키는 안전한 환경 주입으로 전달하세요. upstream Google 키가 아니라 **gateway client key**를 사용합니다.
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
 
-Gemini CLI API-key 모드: 반드시 API-key/gateway 인증을 선택하고 Google 로그인/Vertex 모드를 사용하지 마세요.
+<!-- ALL-CONTRIBUTORS-LIST:END -->
 
-```sh
-export GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:2456
-export GEMINI_API_KEY='<gateway client key>'
-export GOOGLE_GENAI_API_VERSION=v1beta
-gemini
-```
-
-Code Assist 모드: 공식 CLI에서 이미 온보딩한 OAuth 계정을 등록한 뒤 사용합니다.
-
-```sh
-export CODE_ASSIST_ENDPOINT=http://127.0.0.1:2456
-export GOOGLE_GENAI_USE_GCA=true
-export GEMINI_CLI_CUSTOM_HEADERS='x-gemini-lb-key: <gateway client key>, x-gemini-lb-session: stable-session-id'
-gemini
-```
-
-참조 CLI의 커스텀 헤더 형식은 JSON이 아니라 `name: value`이며 여러 헤더는 쉼표로 구분합니다. 위 환경 설정은 라이브 검증되지 않았습니다. 이전 모드 환경 변수는 해제하고 CLI 인증 선택도 확인하세요.
-
-일반 HTTP 클라이언트는 `x-goog-api-key`, `Authorization: Bearer <gateway client key>`, 또는 `x-gemini-lb-key`로 인증합니다. Code Assist의 Google bearer보다 커스텀 키가 우선합니다. 네이티브 멀티턴은 `x-gemini-lb-session`을 반드시 유지하세요. `cachedContent`, `fileData`, `thoughtSignature` 참조에는 명시적인 `x-gemini-lb-account` 또는 이미 연결된 세션이 필요하며, 없으면 409입니다. 리소스 소유권은 운영자가 관리합니다.
-
-## 지원 범위
-
-| 경로                                                                                                                              | 계정 / 동작                                                  |
-| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `GET /healthz`                                                                                                                    | 인증 없는 생존 확인만                                        |
-| `/v1beta/models/:model:generateContent`, `:streamGenerateContent?alt=sse`, `:countTokens`, `:embedContent`, `:batchEmbedContents` | POST, API-key 계정; `/v1`도 지원                             |
-| `/v1beta/models`, `/v1beta/models/:model`                                                                                         | GET, upstream 모델 조회·allowlist 적용; `/v1`도 지원         |
-| `/v1internal:generateContent`, `:streamGenerateContent?alt=sse`, `:countTokens`                                                   | POST, OAuth 계정, Code Assist envelope 보존·project 교체     |
-| `/v1internal:loadCodeAssist`, `:retrieveUserQuota`, `:fetchAdminControls`, `:listExperiments`                                     | POST, 선택된 OAuth 계정; 이미 온보딩된 계정 필요             |
-| `/v1internal:recordCodeAssistMetrics`                                                                                             | 인증 후 로컬 204, 외부 전송 없음                             |
-| `/admin/*`                                                                                                                        | 별도 admin Bearer token; 계정·키·할당량·요청 메타데이터 관리 |
-
-Vertex, OpenAI 변환, Live/WebSocket, Interactions, Files/upload 및 파일 수명주기, caches 수명주기, batch jobs, operations, 다중 replica는 지원하지 않습니다. 미지원 추론 경로는 501이며 유료 크레딧 opt-in 요청도 거부합니다.
-
-계정별 모델 allowlist(빈 목록은 전체), 동시 요청 제한(기본 4), client key별 계정 scope를 지원합니다. 최소 in-flight 계정을 선택하며 같은 project의 API 키는 모델 cooldown을 공유합니다. 최대 3회, 서로 다른 계정으로만 재시도하고 401/403 또는 출력 시작 이후에는 이동·재생하지 않습니다. 세션은 24시간 고정됩니다. 일일 quota 오류에 지연 정보가 없으면 보수적으로 24시간 cooldown하며 정확한 초기화 시각을 추측하지 않습니다. API-key quota 비율도 만들어내지 않습니다.
-
-기본 요청 제한시간은 120초, 본문 제한은 16 MiB, 요청 이력은 메타데이터 1,000행으로 제한됩니다. [구조](docs/architecture.md)와 [보안·백업](docs/security.md)을 확인하세요.
-
-## Docker
-
-```sh
-docker compose build
-docker compose run --rm gemini-lb init
-# 출력된 토큰을 안전하게 보관한 후 시작
-docker compose up -d
-docker compose logs gemini-lb
-docker compose down
-```
-
-Node 24 다단계 이미지, UID 1000, `/data` 영속 볼륨을 사용합니다. 컨테이너 내부는 `0.0.0.0:2456`, 호스트 공개는 `127.0.0.1:2456`뿐입니다. 서버가 실행 중일 때 별도 `init`을 실행하지 마세요. 원격 접속에는 인증을 유지한 TLS reverse proxy가 필요합니다. 자동 배포 설정은 없습니다.
-
-## 개발·출처
-
-```sh
-npm ci
-npm run check
-npm test
-npm run build
-npm run format:check
-```
-
-CI는 위 검증만 수행하며 publish/deploy하지 않습니다. 릴리스 전 의존성 audit·secret review와 실제 계정 검증은 별도로 필요합니다.
-
-로컬 HTTP upstream과 공식 `@google/genai` SDK로 라우팅·스트리밍·도구/서명 보존·토큰 동시 갱신·quota cooldown·세션 고정·인증 경계를 검증했습니다. 실제 브라우저에서도 계정 등록/활성화, quota 조회, scoped key 발급/폐기, 모바일 레이아웃과 새로고침 시 로그아웃을 확인했습니다. Docker는 이 개발 환경의 소켓 권한 제한으로 빌드/실행하지 못했습니다. OAuth quota는 자동 polling하지 않으며 관리자가 수동 갱신합니다. 통계는 보존된 최대 1,000개 요청 기준입니다.
-
-원본 소스를 복사하지 않고 프로토콜을 참고한 독립 구현입니다. 이 프로젝트는 [MIT](LICENSE), Copyright 2026 deploy103입니다. 참고 자료의 라이선스는 각 프로젝트에 적용됩니다.
-
-- [Soju06/codex-lb 참조 리비전](https://github.com/Soju06/codex-lb/tree/f8ffbac2099a113fba54dfd8d77774f5bca80ffa), MIT.
-- [google-gemini/gemini-cli 참조 리비전](https://github.com/google-gemini/gemini-cli/tree/9b6e0265d16bbd29ca51e33c9e0c01dc4cec5e83), Apache-2.0 (`contentGenerator.ts`, `customHeaderUtils.ts`).
-- 공식 [Gemini API REST reference](https://ai.google.dev/api), [API key 안내](https://ai.google.dev/gemini-api/docs/api-key), [Gemini CLI 인증 안내](https://geminicli.com/docs/get-started/authentication/), [Google OAuth 2.0](https://developers.google.com/identity/protocols/oauth2).
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!
