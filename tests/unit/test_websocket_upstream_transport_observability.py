@@ -1,0 +1,596 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from collections import deque
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock
+
+import anyio
+import pytest
+
+from app.core.crypto import TokenEncryptor
+from app.core.openai.parsing import parse_sse_event_payload
+from app.modules.api_keys.service import ApiKeyData
+from app.modules.proxy._service import observability as proxy_observability_module
+from app.modules.proxy._service.support import (
+    _REQUEST_TRANSPORT_HTTP,
+    _REQUEST_TRANSPORT_WEBSOCKET,
+    _WebSocketRequestState,
+    _WebSocketUpstreamControl,
+)
+from app.modules.proxy._service.websocket import mixin as websocket_mixin_module
+from app.modules.proxy._service.websocket.mixin import _WebSocketMixin
+
+
+class _DummyWebSocketService(_WebSocketMixin):
+    def __init__(self) -> None:
+        self.request_log_calls: list[dict[str, object]] = []
+        self.remembered_response_ids: list[str] = []
+        self._background_cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._encryptor = TokenEncryptor()
+
+        class _LoadBalancer:
+            async def record_success(self, _account: object) -> None:
+                return None
+
+        class _ConnectLease:
+            def release(self) -> None:
+                return None
+
+        class _WorkAdmission:
+            async def acquire_websocket_connect(self) -> _ConnectLease:
+                return _ConnectLease()
+
+        self._load_balancer = _LoadBalancer()
+        self._work_admission = _WorkAdmission()
+
+    async def _write_request_log(self, **kwargs: object) -> None:
+        self.request_log_calls.append(kwargs)
+
+    def _cancel_request_state_api_key_reservation_heartbeat(self, _request_state: _WebSocketRequestState) -> None:
+        return None
+
+    async def _settle_stream_api_key_usage(self, *_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def _release_websocket_request_state_reservation(self, _request_state: _WebSocketRequestState) -> None:
+        return None
+
+    def _remember_websocket_previous_response_owner(
+        self, *, previous_response_id: str | None, **_kwargs: object
+    ) -> None:
+        if previous_response_id is not None:
+            self.remembered_response_ids.append(previous_response_id)
+
+    def _get_work_admission(self) -> object:
+        return self._work_admission
+
+    async def _resolve_upstream_route_for_account(self, _account: object, *, operation: str) -> None:
+        assert operation == "responses_websocket"
+        return None
+
+
+class _DummyFacade:
+    _TRANSIENT_RETRY_CODES: frozenset[str] = frozenset()
+
+    @staticmethod
+    def _service_tier_from_event_payload(_payload: object) -> None:
+        return None
+
+    @staticmethod
+    def _should_penalize_stream_error(_error_code: object, _error_message: object = None) -> bool:
+        return False
+
+    @staticmethod
+    def _maybe_dump_oversized_response_create_request(*_args: object, **_kwargs: object) -> None:
+        return None
+
+
+async def _no_op_release_gate(_request_state: object, _response_create_gate: object, **_kwargs: object) -> None:
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _patch_websocket_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(websocket_mixin_module, "_facade", lambda: _DummyFacade())
+    monkeypatch.setattr(websocket_mixin_module, "_release_websocket_response_create_gate", _no_op_release_gate)
+
+
+@pytest.mark.asyncio
+async def test_direct_websocket_connect_egress_uses_selected_installation_metadata_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _DummyWebSocketService()
+    captured: dict[str, object] = {}
+    expected_upstream = object()
+
+    async def connect_responses_websocket(
+        headers: dict[str, str],
+        access_token: str,
+        account_id: str | None,
+        *,
+        route: object,
+        allow_direct_egress: bool,
+        routing_hint: tuple[str, str | None] | None = None,
+    ) -> object:
+        captured["headers"] = dict(headers)
+        captured["access_token"] = access_token
+        captured["account_id"] = account_id
+        captured["route"] = route
+        captured["allow_direct_egress"] = allow_direct_egress
+        captured["routing_hint"] = routing_hint
+        return expected_upstream
+
+    class _DirectWebSocketFacade(_DummyFacade):
+        connect_responses_websocket: Any
+
+        @staticmethod
+        async def _call_with_supported_optional_kwargs(
+            function: object,
+            *args: object,
+            optional_kwargs: dict[str, object],
+        ) -> object:
+            return await cast(Any, function)(*args, **optional_kwargs)
+
+    _DirectWebSocketFacade.connect_responses_websocket = staticmethod(connect_responses_websocket)
+    monkeypatch.setattr(websocket_mixin_module, "_facade", lambda: _DirectWebSocketFacade())
+    account = cast(
+        Any,
+        SimpleNamespace(
+            access_token_encrypted=service._encryptor.encrypt("access-token"),
+            chatgpt_account_id="account-123",
+            codex_installation_id="account-installation",
+        ),
+    )
+
+    upstream = await service._open_upstream_websocket(
+        account,
+        {
+            "x-codex-installation-id": "client-installation",
+            "x-codex-turn-metadata": '{"installation_id":"nested-client-installation","turn_id":"turn_123"}',
+        },
+    )
+
+    assert upstream is expected_upstream
+    assert captured["access_token"] == "access-token"
+    assert captured["account_id"] == "account-123"
+    assert captured["route"] is None
+    assert captured["allow_direct_egress"] is True
+    assert captured["routing_hint"] is None
+    upstream_headers = cast(dict[str, str], captured["headers"])
+    assert "x-codex-installation-id" not in upstream_headers
+    assert json.loads(upstream_headers["x-codex-turn-metadata"]) == {
+        "installation_id": "account-installation",
+        "turn_id": "turn_123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_websocket_finalizer_records_bridge_upstream_transport_and_metric(monkeypatch):
+    service = _DummyWebSocketService()
+    metric_calls: list[dict[str, object]] = []
+
+    def record_metric(**labels: object) -> None:
+        metric_calls.append(dict(labels))
+
+    monkeypatch.setattr(websocket_mixin_module, "_record_upstream_transport_decision", record_metric)
+
+    request_state = _WebSocketRequestState(
+        request_id="ws_bridge_success",
+        request_log_id="resp_bridge_success_log",
+        response_id="resp_bridge_success",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_HTTP,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+
+    await service._finalize_websocket_request_state(
+        request_state,
+        account=cast(Any, object()),
+        account_id_value="acc_bridge",
+        event=None,
+        event_type="response.completed",
+        payload={},
+        api_key=None,
+        upstream_control=_WebSocketUpstreamControl(),
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert service.request_log_calls == [
+        {
+            "account_id": "acc_bridge",
+            "affinity_observation": None,
+            "api_key": None,
+            "request_id": "resp_bridge_success",
+            "archive_request_id": None,
+            "model": "gpt-5.1",
+            "latency_ms": service.request_log_calls[0]["latency_ms"],
+            "status": "success",
+            "error_code": None,
+            "error_message": None,
+            "failure_phase": None,
+            "failure_detail": None,
+            "upstream_error_code": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            "cached_input_tokens": None,
+            "reasoning_tokens": None,
+            "reasoning_effort": None,
+            "transport": "http",
+            "upstream_transport": "websocket",
+            "service_tier": None,
+            "requested_service_tier": None,
+            "actual_service_tier": None,
+            "latency_first_token_ms": None,
+            "latency_response_created_ms": None,
+            "latency_first_upstream_event_ms": None,
+            "latency_response_create_gate_wait_ms": None,
+            "latency_bridge_queue_wait_ms": None,
+            "latency_upstream_send_ms": None,
+            "latency_upstream_terminal_ms": service.request_log_calls[0]["latency_upstream_terminal_ms"],
+            "upstream_retried": False,
+            "prewarm_status": None,
+            "prewarm_latency_ms": None,
+            "session_previous_gap_ms": None,
+            "session_id": None,
+            "upstream_proxy_route_mode": None,
+            "upstream_proxy_pool_id": None,
+            "upstream_proxy_endpoint_id": None,
+            "upstream_proxy_fallback_used": None,
+            "upstream_proxy_fail_closed_reason": None,
+            "useragent": None,
+            "useragent_group": None,
+            "conversation_id": None,
+            "client_ip": None,
+            "request_kind": "normal",
+            "connection_request_kind": None,
+        }
+    ]
+    # No reader stamp on this turn: the throughput span ends at finalizer entry,
+    # never after the row's own latency.
+    terminal_ms = cast(int, service.request_log_calls[0]["latency_upstream_terminal_ms"])
+    assert 0 <= terminal_ms <= cast(int, service.request_log_calls[0]["latency_ms"])
+    assert metric_calls == [
+        {
+            "downstream_transport": "http",
+            "upstream_transport": "websocket",
+            "policy": "bridge",
+            "sticky": False,
+            "status": "success",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, False, id="single-attempt"),
+        pytest.param({"replay_count": 1}, True, id="direct-websocket-replay"),
+        pytest.param({"response_create_attempt_count": 2}, True, id="bridge-retry"),
+        pytest.param({"account_capacity_wait_started_at": 1.0}, True, id="capacity-wait"),
+    ],
+)
+async def test_websocket_finalizer_marks_replayed_turns_as_upstream_retried(
+    overrides: dict[str, object], expected: bool
+) -> None:
+    # A transparent direct-WebSocket replay bumps ``replay_count`` only; the
+    # bridge counts ``response_create_attempt_count``. Either leaves the failed
+    # attempt inside the first-token latency, so the TTFT cohort sampler must
+    # see the row as retried.
+    service = _DummyWebSocketService()
+    request_state = _WebSocketRequestState(
+        request_id="ws_direct_replay",
+        response_id="resp_direct_replay",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_WEBSOCKET,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+        **cast(Any, overrides),
+    )
+
+    await service._finalize_websocket_request_state(
+        request_state,
+        account=cast(Any, object()),
+        account_id_value="acc_direct",
+        event=None,
+        event_type="response.completed",
+        payload={},
+        api_key=None,
+        upstream_control=_WebSocketUpstreamControl(),
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert len(service.request_log_calls) == 1
+    assert service.request_log_calls[0]["upstream_retried"] is expected
+
+
+@pytest.mark.asyncio
+async def test_websocket_connect_failure_records_bridge_upstream_transport_and_metric(monkeypatch):
+    service = _DummyWebSocketService()
+    metric_calls: list[dict[str, object]] = []
+
+    def record_metric(**labels: object) -> None:
+        metric_calls.append(dict(labels))
+
+    monkeypatch.setattr(websocket_mixin_module, "_record_upstream_transport_decision", record_metric)
+
+    request_state = _WebSocketRequestState(
+        request_id="ws_bridge_failure",
+        request_log_id="resp_bridge_failure",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_HTTP,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+
+    await service._write_websocket_connect_failure(
+        account_id="acc_bridge",
+        api_key=None,
+        request_state=request_state,
+        error_code="upstream_unavailable",
+        error_message="bridge upstream failed",
+    )
+
+    assert service.request_log_calls == [
+        {
+            "account_id": "acc_bridge",
+            "affinity_observation": None,
+            "api_key": None,
+            "request_id": "resp_bridge_failure",
+            "archive_request_id": None,
+            "model": "gpt-5.1",
+            "latency_ms": service.request_log_calls[0]["latency_ms"],
+            "status": "error",
+            "error_code": "upstream_unavailable",
+            "error_message": "bridge upstream failed",
+            "failure_phase": None,
+            "failure_detail": None,
+            "upstream_error_code": None,
+            "reasoning_effort": None,
+            "transport": "http",
+            "upstream_transport": "websocket",
+            "service_tier": None,
+            "requested_service_tier": None,
+            "actual_service_tier": None,
+            "latency_first_token_ms": None,
+            "latency_response_created_ms": None,
+            "latency_first_upstream_event_ms": None,
+            "latency_response_create_gate_wait_ms": None,
+            "latency_bridge_queue_wait_ms": None,
+            "prewarm_status": None,
+            "prewarm_latency_ms": None,
+            "session_previous_gap_ms": None,
+            "session_id": None,
+            "upstream_proxy_route_mode": None,
+            "upstream_proxy_pool_id": None,
+            "upstream_proxy_endpoint_id": None,
+            "upstream_proxy_fallback_used": None,
+            "upstream_proxy_fail_closed_reason": None,
+            "useragent": None,
+            "useragent_group": None,
+            "conversation_id": None,
+            "client_ip": None,
+            "request_kind": "normal",
+            "connection_request_kind": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fail_pending_websocket_requests_records_bridge_upstream_transport_and_metric(monkeypatch):
+    service = _DummyWebSocketService()
+    metric_calls: list[dict[str, object]] = []
+
+    def record_metric(**labels: object) -> None:
+        metric_calls.append(dict(labels))
+
+    monkeypatch.setattr(websocket_mixin_module, "_record_upstream_transport_decision", record_metric)
+
+    request_state = _WebSocketRequestState(
+        request_id="ws_bridge_pending_failure",
+        request_log_id="resp_bridge_pending_failure_log",
+        response_id="resp_bridge_pending_failure",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_HTTP,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+
+    await service._fail_pending_websocket_requests(
+        account_id_value="acc_bridge",
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        error_code="stream_incomplete",
+        error_message="Upstream websocket closed before response.completed",
+        api_key=None,
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert service.request_log_calls == [
+        {
+            "account_id": "acc_bridge",
+            "affinity_observation": None,
+            "api_key": None,
+            "request_id": "resp_bridge_pending_failure",
+            "archive_request_id": None,
+            "model": "gpt-5.1",
+            "latency_ms": service.request_log_calls[0]["latency_ms"],
+            "status": "error",
+            "error_code": "stream_incomplete",
+            "error_message": "Upstream websocket closed before response.completed",
+            "failure_phase": None,
+            "failure_detail": None,
+            "upstream_error_code": None,
+            "reasoning_effort": None,
+            "transport": "http",
+            "upstream_transport": "websocket",
+            "service_tier": None,
+            "requested_service_tier": None,
+            "actual_service_tier": None,
+            "latency_first_token_ms": None,
+            "session_id": None,
+            "upstream_proxy_route_mode": None,
+            "upstream_proxy_pool_id": None,
+            "upstream_proxy_endpoint_id": None,
+            "upstream_proxy_fallback_used": None,
+            "upstream_proxy_fail_closed_reason": None,
+            "useragent": None,
+            "useragent_group": None,
+            "conversation_id": None,
+            "client_ip": None,
+            "request_kind": "normal",
+            "connection_request_kind": None,
+        }
+    ]
+    assert metric_calls == [
+        {
+            "downstream_transport": "http",
+            "upstream_transport": "websocket",
+            "policy": "bridge",
+            "sticky": False,
+            "status": "error",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fail_pending_websocket_requests_attributes_request_state_api_key(monkeypatch):
+    """Bridge failure fan-out passes api_key=None at the session level; each
+    pending request's log row must still be attributed to that request's own
+    authenticated key (request_state.api_key)."""
+    service = _DummyWebSocketService()
+    monkeypatch.setattr(websocket_mixin_module, "_record_upstream_transport_decision", lambda **_labels: None)
+
+    request_key = ApiKeyData(
+        id="key_bridge_pending",
+        name="bridge-key",
+        key_prefix="sk-bridge",
+        allowed_models=None,
+        enforced_model=None,
+        enforced_reasoning_effort=None,
+        enforced_service_tier=None,
+        expires_at=None,
+        is_active=True,
+        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        last_used_at=None,
+    )
+    request_state = _WebSocketRequestState(
+        request_id="ws_bridge_pending_key",
+        request_log_id="resp_bridge_pending_key_log",
+        response_id="resp_bridge_pending_key",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        api_key=request_key,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_HTTP,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+
+    await service._fail_pending_websocket_requests(
+        account_id_value="acc_bridge",
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        error_code="stream_incomplete",
+        error_message="Upstream websocket closed before response.completed",
+        api_key=None,
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert len(service.request_log_calls) == 1
+    assert service.request_log_calls[0]["api_key"] is request_key
+
+
+_REASONING_REPLAY_MESSAGE = (
+    "Item with id 'rs_0f3a' of type 'reasoning' was provided without its required following item."
+)
+
+
+def _reasoning_replay_frame(event_type: str, *, code: str, message: str, enveloped: bool) -> dict[str, Any]:
+    if event_type == "response.failed":
+        return {
+            "type": "response.failed",
+            "response": {"id": "resp_replay", "error": {"code": code, "message": message}},
+        }
+    if enveloped:
+        return {"type": "error", "error": {"code": code, "message": message}}
+    # The ChatGPT-backed websocket emits error details directly on the frame.
+    return {"type": "error", "code": code, "message": message}
+
+
+@pytest.mark.parametrize(
+    ("event_type", "code", "message", "enveloped", "expected_increments"),
+    [
+        ("error", "invalid_request_error", _REASONING_REPLAY_MESSAGE, False, 1),
+        ("error", "invalid_request_error", _REASONING_REPLAY_MESSAGE, True, 1),
+        ("response.failed", "invalid_request_error", _REASONING_REPLAY_MESSAGE, True, 1),
+        ("error", "invalid_request_error", "No tool output found for function call call_abc.", False, 0),
+        ("response.failed", "server_error", _REASONING_REPLAY_MESSAGE, True, 0),
+    ],
+)
+@pytest.mark.asyncio
+async def test_websocket_terminal_frame_counts_reasoning_replay_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+    event_type: str,
+    code: str,
+    message: str,
+    enveloped: bool,
+    expected_increments: int,
+) -> None:
+    """Websocket (and HTTP-bridge) terminal frames never carry an HTTP status and are never
+    penalized for invalid_request_error, so the reasoning-replay counter must fire at frame
+    finalization rather than inside the account-health handler."""
+    counter = MagicMock()
+    monkeypatch.setattr(proxy_observability_module, "PROMETHEUS_AVAILABLE", True)
+    monkeypatch.setattr(proxy_observability_module, "upstream_reasoning_replay_400_total", counter)
+    service = _DummyWebSocketService()
+    payload = _reasoning_replay_frame(event_type, code=code, message=message, enveloped=enveloped)
+    event = parse_sse_event_payload(payload)
+    request_state = _WebSocketRequestState(
+        request_id="ws_replay",
+        request_log_id="resp_replay_log",
+        response_id="resp_replay",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport=_REQUEST_TRANSPORT_WEBSOCKET,
+        upstream_transport=_REQUEST_TRANSPORT_WEBSOCKET,
+    )
+
+    await service._finalize_websocket_request_state(
+        request_state,
+        account=cast(Any, SimpleNamespace(id="acc_replay")),
+        account_id_value="acc_replay",
+        event=event,
+        event_type=event_type,
+        payload=payload,
+        api_key=None,
+        upstream_control=_WebSocketUpstreamControl(),
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert counter.inc.call_count == expected_increments
+    assert len(service.request_log_calls) == 1
+    assert service.request_log_calls[0]["status"] == "error"
+    assert service.request_log_calls[0]["error_code"] == code

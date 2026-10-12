@@ -1,0 +1,17 @@
+# Foundation context
+
+The owner explicitly requested copying the original stack, builds and functionality, rather than rewriting a smaller gateway. The foundation is Soju06/codex-lb at `f8ffbac2099a113fba54dfd8d77774f5bca80ffa`. Its MIT license remains in LICENSE. Original release metadata and internal `codex-lb` package/module/build names are intentionally retained; the `gemini-lb` and `gemini-lb-db` entry points are aliases, not a separately published distribution.
+
+The original source inventory contains 786,248 physical code lines, including 495,194 test lines (excluding documents, JSON, locks and downloaded dependencies). A 500,000-line target is not a reason to delete regression coverage. The pre-adoption Node implementation remains in repository history.
+
+Dither Kit source components were imported from the Tripwire registry; `frontend/dither-kit.json` records versions and hashes, and `frontend/src/components/dither-kit/NOTICE` retains the component notice. The existing React forms, navigation, shadcn controls and chart data are retained. No separate UI service is introduced.
+
+Native Google uses the retained model-source control plane, downstream API-key reservations, admission limits and request logging. Its upstream credentials are not Codex accounts. The retained OpenAI routes do not translate Gemini. Dollar limits require explicitly configured model prices; Codex credit limits and OpenAI reasoning/service-tier policies are rejected on native Google requests rather than silently ignored. API-key quota cannot be inferred reliably. Code Assist quota reflects observations, not a live guarantee.
+
+Example: two Google API keys in one quota project should use JSON credentials with the same `quota_scope`; a 429 cooldown then applies to both sources. OAuth tokens must include the matching OAuth client and an already onboarded project. Operator reimport wins over a concurrent refresh through an encrypted-credential compare-and-swap.
+
+Resource lifecycle APIs, automatic project onboarding, paid-credit activation, implicit OpenAI conversion, and translation of the old 0.1 admin API are deliberately unsupported. `/healthz`, inference paths, custom client/session/source headers and existing key hashes are preserved. Import maps legacy accounts to model sources, brings over key assignments and ownership, and copies metadata-only history; it does not fabricate missing historical token breakdowns or costs. Existing credentials are re-encrypted for the copied runtime.
+
+Upstream publication, bot, metadata-update and release workflows are preserved byte-for-byte in `.github/upstream-workflows/`, outside the Actions execution directory. The active workflow validates only and has read-only repository permissions. No package, image, release, production service or migration is published/applied implicitly.
+
+Local baseline checks passed for lint, types, packaged frontend assets, 1,649 frontend tests and eight real-API browser smoke cases. Two shutdown tests failed on the untouched upstream Python 3.14 baseline and are recorded as existing failures, not suppressed. Native regression cases use the real FastAPI application and a local HTTP Google/OAuth fixture; they do not prove access to a live Google account. Docker execution requires a usable Docker daemon and was unavailable on the runner.

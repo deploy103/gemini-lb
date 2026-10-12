@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+from app.core.types import JsonValue
+
+
+class AppError(Exception):
+    """Base exception for all domain errors."""
+
+    status_code: int = 500
+    code: str = "internal_error"
+    message: str = "Unexpected error"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        code: str | None = None,
+        param: str | None = None,
+        details: Mapping[str, JsonValue] | None = None,
+    ) -> None:
+        self.message = message or self.__class__.message
+        self.param = param
+        #: Structured hints for the client (dashboard envelope only), e.g. the
+        #: step-up methods a principal may use.
+        self.details = details
+        if code is not None:
+            self.code = code
+        super().__init__(self.message)
+
+
+# --- OpenAI-envelope errors (proxy routes) ---
+
+
+class ProxyAuthError(AppError):
+    status_code = 401
+    code = "invalid_api_key"
+    error_type = "authentication_error"
+
+
+class ProxyModelNotAllowed(AppError):
+    status_code = 403
+    code = "model_not_allowed"
+    error_type = "permission_error"
+
+
+class ProxyReasoningEffortNotAllowed(AppError):
+    status_code = 403
+    code = "reasoning_effort_not_allowed"
+    error_type = "permission_error"
+
+
+class ProxyRateLimitError(AppError):
+    status_code = 429
+    code = "rate_limit_exceeded"
+    error_type = "rate_limit_error"
+
+
+class ProxyUpstreamError(AppError):
+    status_code = 503
+    code = "upstream_error"
+    error_type = "server_error"
+
+
+class ProxyRequiredCapabilityTransportError(AppError):
+    status_code = 400
+    code = "required_capability_transport_unsupported"
+    error_type = "invalid_request_error"
+    message = "Required capability routing is only supported over the Responses WebSocket transport."
+
+
+# --- Dashboard-envelope errors ---
+
+
+class DashboardAuthError(AppError):
+    status_code = 401
+    code = "authentication_required"
+
+
+class DashboardPermissionError(AppError):
+    status_code = 403
+    code = "permission_denied"
+
+
+class DashboardNotFoundError(AppError):
+    status_code = 404
+    code = "not_found"
+
+
+class DashboardConflictError(AppError):
+    status_code = 409
+    code = "conflict"
+
+
+class DashboardSettingsConflictError(DashboardConflictError):
+    code = "settings_conflict"
+    message = "Settings were modified by another writer; reload and retry"
+
+
+class DashboardBadRequestError(AppError):
+    status_code = 400
+    code = "bad_request"
+
+
+class DashboardValidationError(AppError):
+    status_code = 422
+    code = "validation_error"
+
+
+class DashboardRateLimitError(AppError):
+    status_code = 429
+    code = "rate_limited"
+
+    def __init__(self, message: str, *, retry_after: int, code: str | None = None) -> None:
+        self.retry_after = retry_after
+        super().__init__(message, code=code)
+
+
+class ScimError(AppError):
+    """A refusal from ``/scim/v2``, answered in RFC 7644's error envelope.
+
+    The status is per-instance because one exception type covers the whole
+    surface; ``scim_type`` carries an RFC 7644 §3.12 keyword only where the
+    specification defines one for the case (``400`` and the duplicate-resource
+    ``409``), and nothing product-specific is ever added to the body. The
+    dashboard envelope is deliberately not reused: an identity provider parses
+    this shape and no other.
+    """
+
+    status_code = 400
+    code = "scim_error"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 400,
+        scim_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.scim_type = scim_type
+        self.headers = dict(headers) if headers else None
+        super().__init__(message)
+
+
+class DashboardUpstreamError(AppError):
+    status_code = 502
+    code = "upstream_error"
+
+
+class DashboardServiceUnavailableError(AppError):
+    status_code = 503
+    code = "service_unavailable"

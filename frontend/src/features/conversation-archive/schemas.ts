@@ -1,0 +1,26 @@
+import { z } from "zod";
+
+const ConversationArchiveRecordSchema = z.object({
+  fileName: z.string().nullable().default(null),
+  timestamp: z.iso.datetime({ offset: true }).nullable(),
+  requestId: z.string().nullable(),
+  direction: z.string().nullable(),
+  kind: z.string().nullable(),
+  transport: z.string().nullable(),
+  accountId: z.string().nullable(),
+  method: z.string().nullable(),
+  url: z.string().nullable(),
+  statusCode: z.number().int().nullable(),
+  headers: z.record(z.string(), z.string()).nullable(),
+  payload: z.unknown(),
+  extra: z.record(z.string(), z.unknown()).nullable().default(null),
+});
+
+export const ConversationArchiveRecordsResponseSchema = z.object({
+  records: z.array(ConversationArchiveRecordSchema),
+  total: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
+
+export type ConversationArchiveRecord = z.infer<typeof ConversationArchiveRecordSchema>;
+export type ConversationArchiveRecordsResponse = z.infer<typeof ConversationArchiveRecordsResponseSchema>;
