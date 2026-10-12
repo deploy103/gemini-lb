@@ -112,7 +112,7 @@ class BulkheadMiddleware:
                 send,
                 status_code=503,
                 payload=google_error(503, message)
-                if is_google_proxy_path(path, Headers(scope=scope))
+                if is_google_proxy_path(path, Headers(raw=scope.get("headers", [])))
                 else local_unavailable_error(message)
                 if is_proxy_path(path)
                 else {"detail": message},
@@ -148,7 +148,7 @@ class BulkheadMiddleware:
                 send,
                 status_code=429,
                 payload=google_error(429, message)
-                if is_google_proxy_path(path, Headers(scope=scope))
+                if is_google_proxy_path(path, Headers(raw=scope.get("headers", [])))
                 else local_overload_error(message)
                 if is_proxy_path(path)
                 else {"detail": message},

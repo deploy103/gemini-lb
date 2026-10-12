@@ -29,11 +29,15 @@ The application SHALL NOT reinterpret an existing gemini-lb 0.1 database as a co
 - **THEN** it does not modify the legacy store
 
 ### Requirement: Reuse the retained model-source control plane
-Gemini API-key and Code Assist OAuth credentials SHALL be explicit model-source kinds, encrypted by the retained credential store and managed through its authorized dashboard APIs. Gemini routing SHALL enforce client model allowlists, source assignments, expiration, usage reservations and concurrency admission. Google credentials SHALL NOT enter Codex account selection or OpenAI-compatible transports.
+Gemini API-key and Code Assist OAuth credentials SHALL be explicit model-source kinds, encrypted by the retained credential store and managed through its authorized dashboard APIs. Gemini routing SHALL enforce client model allowlists, source assignments, expiration, usage reservations and concurrency admission. Enabled configured Google models SHALL appear in dashboard key-policy selectors even without a Codex registry, but SHALL NOT enter the OpenAI catalog. Google credentials SHALL NOT enter Codex account selection or OpenAI-compatible transports.
 
 #### Scenario: Client key has an empty explicit source scope
 - **WHEN** a valid client key with source scoping enabled and no assigned sources requests Gemini inference
 - **THEN** no Google account is selected and no upstream request is made
+
+#### Scenario: Configure a native model allowlist
+- **WHEN** an operator registers enabled Google models and opens the dashboard key-policy selector
+- **THEN** those models are selectable even if the Codex model registry is empty
 
 ### Requirement: Preserve native Google protocol contracts
 The gateway SHALL support Gemini model discovery, generateContent, streamGenerateContent, countTokens, embedContent and batchEmbedContents on /v1beta and equivalent /v1 model paths. Streams SHALL require alt=sse and preserve Google SSE payloads. Code Assist SHALL use /v1internal RPCs and a configured Google project, not a client-provided project. Every Google request SHALL require a downstream key independently of the global Codex proxy-auth toggle. Query keys and arbitrary client headers SHALL NOT be forwarded upstream.

@@ -43,6 +43,16 @@ cd gemini-lb
 uv sync --dev --frozen
 make frontend-build
 uv run gemini-lb
+
+# Or build the retained Dockerfile locally (no published Gemini image).
+docker build -t gemini-lb:local .
+docker volume create gemini-lb-v2-data
+docker network inspect codex-lb-net >/dev/null 2>&1 || docker network create codex-lb-net
+docker run -d --name codex-lb \
+  --network codex-lb-net \
+  -p 2455:2455 -p 1455:1455 \
+  -v gemini-lb-v2-data:/var/lib/codex-lb \
+  gemini-lb:local
 ```
 
 Open [localhost:2455](http://localhost:2455), add a **Gemini API key** or **Gemini Code Assist OAuth** source under APIs, and create a separate downstream API key. Google credentials never double as gateway client keys. Configure model prices explicitly when using dollar limits.

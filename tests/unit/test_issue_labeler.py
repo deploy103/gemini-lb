@@ -24,7 +24,8 @@ import yaml
 def test_issue_event_adds_only_classification_labels(
     title: str, state: str, existing: list[str], added: list[str]
 ) -> None:
-    workflow = Path(__file__).parents[2] / ".github/workflows/issue-labeler.yml"
+    # The bot is inactive; execute the unchanged archived upstream script.
+    workflow = Path(__file__).parents[2] / ".github/upstream-workflows/issue-labeler.yml"
     script = yaml.safe_load(workflow.read_text())["jobs"]["label"]["steps"][0]["with"]["script"]
     node = shutil.which("node")
     if node is None:

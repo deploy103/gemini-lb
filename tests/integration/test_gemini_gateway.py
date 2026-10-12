@@ -115,12 +115,42 @@ async def test_google_native_auth_paths_and_usage(async_client, google_upstream,
     assert reservations[0].cost_microdollars == (0 if method == "countTokens" else 117)
 
 
-async def test_google_catalog_filters_without_replacing_openai_catalog(async_client, google_upstream):
+@pytest.mark.parametrize("empty_registry", [False, True])
+async def test_google_catalog_filters_without_replacing_openai_catalog(
+    async_client, google_upstream, monkeypatch, empty_registry
+):
+    from app.core.openai.model_registry import get_model_registry
+
+    if empty_registry:
+        monkeypatch.setattr(get_model_registry(), "get_models_with_fallback", lambda: {})
+
     async def handler(request):
         assert request.method == "GET"
         return web.json_response({"models": [{"name": f"models/{MODEL}"}, {"name": "models/other"}]})
 
-    await _source(async_client, await google_upstream(handler))
+    base = await google_upstream(handler)
+    await _source(async_client, base)
+    oauth_model = "gemini-2.5-pro"
+    oauth_source = await _source(
+        async_client,
+        base,
+        "oauth",
+        kind="gemini_code_assist",
+        credential=json.dumps(
+            {"project": "project", "access_token": "access", "expiry_date": time.time() * 1000 + 3600000}
+        ),
+    )
+    configured = await async_client.patch(
+        f"/api/model-sources/{oauth_source}",
+        json={"models": [{"model": oauth_model}, {"model": "disabled-model", "isEnabled": False}]},
+    )
+    assert configured.status_code == 200, configured.text
+    dashboard = await async_client.get("/api/models")
+    assert dashboard.status_code == 200, dashboard.text
+    assert {model["id"]: model["name"] for model in dashboard.json()["models"] if model["sourceOnly"]} == {
+        MODEL: MODEL,
+        oauth_model: oauth_model,
+    }
     key = await _key(async_client)
     for path in ("/v1beta/models", "/v1/models/", "/gemini/v1/models"):
         response = await async_client.get(path, headers={"x-goog-api-key": key["key"]})
@@ -128,6 +158,7 @@ async def test_google_catalog_filters_without_replacing_openai_catalog(async_cli
         assert response.json() == {"models": [{"name": f"models/{MODEL}"}]}
     openai = await async_client.get("/v1/models", headers={"Authorization": f"Bearer {key['key']}"})
     assert openai.status_code == 200 and openai.json()["object"] == "list"
+    assert {MODEL, oauth_model, "disabled-model"}.isdisjoint(model["id"] for model in openai.json()["data"])
 
 
 async def test_google_rejects_unauthorized_models_sources_resources_and_capabilities(async_client, google_upstream):
