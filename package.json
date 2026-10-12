@@ -1,0 +1,30 @@
+{
+  "name": "gemini-lb",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A self-hosted Gemini API and Code Assist account-pooling gateway",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js serve",
+    "dev": "tsx src/cli.ts serve",
+    "test": "tsx --test test/*.test.ts",
+    "check": "tsc --noEmit",
+    "format": "prettier --write src test public *.json docs *.md",
+    "format:check": "prettier --check src test public *.json docs *.md"
+  },
+  "dependencies": {
+    "fastify": "^5.6.1"
+  },
+  "devDependencies": {
+    "@google/genai": "^1.30.0",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^24.0.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+secrets.json
+oauth_creds.json
+playwright-report/
+test-results/
