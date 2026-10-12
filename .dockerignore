@@ -1,5 +1,6 @@
 .git
 .gitignore
+.amp/in/
 __pycache__/
 *.pyc
 *.pyo

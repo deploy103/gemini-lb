@@ -18,7 +18,7 @@ The dashboard listens on port 2455. Remote first-run access uses the retained bo
 
 ## Add Google sources
 
-In **APIs**, create a model source with the explicit provider kind:
+In **Settings → Advanced settings → Model sources**, choose **Add source** and select the explicit provider kind. The **APIs** page manages downstream client keys, not Google credentials.
 
 - **Gemini API key**: base URL `https://generativelanguage.googleapis.com`, credential containing the Google API key. To group project-level quota, use `{"api_key":"YOUR_GOOGLE_KEY","quota_scope":"my-google-project"}`.
 - **Gemini Code Assist OAuth**: base URL `https://cloudcode-pa.googleapis.com`, OAuth JSON containing an already onboarded `project`, `access_token`, and `expiry_date` in Unix milliseconds. Refresh requires the matching `refresh_token`, `client_id` and `client_secret`. An access-only import works until expiration, then requires reimport.

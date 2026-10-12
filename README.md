@@ -55,7 +55,7 @@ docker run -d --name codex-lb \
   gemini-lb:local
 ```
 
-Open [localhost:2455](http://localhost:2455), add a **Gemini API key** or **Gemini Code Assist OAuth** source under APIs, and create a separate downstream API key. Google credentials never double as gateway client keys. Configure model prices explicitly when using dollar limits.
+Open [localhost:2455](http://localhost:2455), add a **Gemini API key** or **Gemini Code Assist OAuth** source under **Settings → Advanced settings → Model sources**, and create a separate downstream key under **APIs**. Google credentials never double as gateway client keys. Configure model prices explicitly when using dollar limits.
 
 Accessing the dashboard remotely for the first time? You need a one-time bootstrap token —
 see [Getting started](https://soju06.github.io/codex-lb/getting-started/).
