@@ -15,3 +15,6 @@ Native CLI histories without custom session headers derive a stable first-user-c
 
 
 
+
+
+Operators must satisfy Google's official account eligibility and age-verification requirements. A subscription does not replace these checks. Google's FAQ disallows third-party consumer-account access and account-rotation wrappers; this adapter is not an officially supported consumer integration. Do not change identity information, client versions, hosts or tiers to evade a refusal.
