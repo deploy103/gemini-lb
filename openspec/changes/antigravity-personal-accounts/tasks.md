@@ -5,5 +5,8 @@
 ## Verification
 - [x] Cover free/Pro metadata, callback rejection, onboarding consent, no credit spending, native JSON/stream usage and provider isolation through public APIs.
 - [x] Run regression, lint/type/build checks and inspect affected desktop/mobile UI states.
-- [ ] Verify real account inference when authorized account access is available; otherwise record the exact remaining human authorization gate.
-- [ ] Sync specifications, archive verified work, publish through Windows and update the existing VM without changing proxy/router configuration.
+- [x] Record the exact remaining human authorization gate on the live Google login screen.
+- [x] Sync specifications, publish through Windows and update the existing VM without changing proxy/router configuration.
+- [x] Complete feature-head cloud CI without disabling or excluding any checks.
+- [ ] Verify actual ordinary/streaming inference and persisted usage through authorized free and AI Pro accounts.
+- [ ] Archive only after the remaining live-account acceptance is verified.
