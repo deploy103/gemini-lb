@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 from app.core.types import JsonValue
 from app.db.models import ModelSource
+from app.modules.gemini import antigravity
 from app.modules.gemini.repository import save_quota
 from app.modules.gemini.transport import GoogleError, google_json
 from app.modules.model_sources.schemas import ModelSourceModelInput
@@ -12,6 +13,29 @@ from app.modules.model_sources.schemas import ModelSourceModelInput
 
 async def discover_google_models(source: ModelSource) -> list[ModelSourceModelInput]:
     """Read provider metadata, never infer availability from a generated response."""
+    if source.kind == "gemini_antigravity":
+        result = await google_json(source, "/v1internal:fetchAvailableModels", {})
+        models = antigravity.catalog_models(result)
+        quota = antigravity.model_quota(result)
+        discovered: list[ModelSourceModelInput] = []
+        for model, metadata in sorted(models.items()):
+            display = metadata.get("displayName")
+            limits: list[int | None] = []
+            for field in ("inputTokenLimit", "outputTokenLimit"):
+                value = metadata.get(field)
+                if value is not None and (type(value) is not int or value <= 0):
+                    raise GoogleError(502, "Google returned invalid Antigravity token limits")
+                limits.append(value if type(value) is int else None)
+            discovered.append(
+                ModelSourceModelInput(
+                    model=model,
+                    display_name=display[:255] if isinstance(display, str) else None,
+                    context_window=limits[0],
+                    max_output_tokens=limits[1],
+                )
+            )
+        await save_quota(source.id, quota)
+        return discovered
     if source.kind == "gemini_code_assist":
         await google_json(source, "/v1internal:loadCodeAssist", {"metadata": {}})
         quota = await google_json(source, "/v1internal:retrieveUserQuota", {})

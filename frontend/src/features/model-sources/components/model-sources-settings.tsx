@@ -58,7 +58,7 @@ export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: M
   const deleteDialog = useDialogState<ModelSource>();
   const diagnosticsDialog = useDialogState<ModelSource>();
   const sources = (modelSourcesQuery.data?.sources ?? []).filter((source) =>
-    !geminiOnly || source.kind === "gemini_api_key" || source.kind === "gemini_code_assist",
+    !geminiOnly || source.kind === "gemini_api_key" || source.kind === "gemini_code_assist" || source.kind === "gemini_antigravity",
   );
   const busy =
     disabled ||
@@ -119,7 +119,7 @@ export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: M
 	                      {source.isEnabled ? t("common.states.enabled") : t("common.states.disabled")}
                     </Badge>
                     {(source.kind.startsWith("gemini_")
-                      ? [source.kind === "gemini_code_assist" ? "Google OAuth / Code Assist" : "Gemini API key", source.healthStatus]
+                      ? [source.kind === "gemini_antigravity" ? t("gemini.accounts.gemini_antigravity") : source.kind === "gemini_code_assist" ? t("gemini.accounts.gemini_code_assist") : "Gemini API key", source.healthStatus]
                       : protocolBadges(source)).map((protocol) => (
                       <Badge key={protocol} variant="secondary">
                         {protocol}
@@ -180,7 +180,7 @@ export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: M
                 {!source.models.some((model) => model.isEnabled) &&
                   <p className="text-xs text-muted-foreground">{t("gemini.discovery.notRoutable")}</p>}
               </div>}
-              {geminiOnly && source.kind === "gemini_code_assist" ? (
+              {geminiOnly && (source.kind === "gemini_code_assist" || source.kind === "gemini_antigravity") ? (
                 <div className="mt-3"><ModelSourceQuota sourceId={source.id} disabled={disabled} /></div>
               ) : geminiOnly ? (
                 <p className="mt-3 text-xs text-muted-foreground">{t("gemini.accounts.unknownQuota")}</p>

@@ -2,6 +2,7 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 import {
   GoogleConnectionSchema,
+  type GoogleSourceKind,
   type GoogleConnectionCompleteRequest,
   GoogleDiscoverySchema,
   ModelSourceCreateRequestSchema,
@@ -13,8 +14,8 @@ import {
 
 const MODEL_SOURCES_PATH = "/api/model-sources";
 
-export function startGoogleConnection() {
-  return post(`${MODEL_SOURCES_PATH}/google/start`, GoogleConnectionSchema);
+export function startGoogleConnection(kind: GoogleSourceKind = "gemini_code_assist") {
+  return post(`${MODEL_SOURCES_PATH}/google/start`, GoogleConnectionSchema, { body: { kind } });
 }
 
 export function completeGoogleConnection(payload: GoogleConnectionCompleteRequest) {

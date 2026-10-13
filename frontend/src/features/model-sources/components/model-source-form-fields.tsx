@@ -23,6 +23,11 @@ type ModelSourceFormFieldsProps = {
 const PROVIDERS = [
   { kind: "openai_compatible", label: "OpenAI-compatible", baseUrl: "" },
   {
+    kind: "gemini_antigravity",
+    label: "Google Antigravity personal account (OAuth)",
+    baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+  },
+  {
     kind: "gemini_api_key",
     label: "Google Gemini API key",
     baseUrl: "https://generativelanguage.googleapis.com",
@@ -58,7 +63,8 @@ export function ModelSourceFormFields({
   const { t } = useTranslation();
   const { setValue, getValues } = useFormContext<ModelSourceFormValues>();
   const kind = useWatch({ control, name: "kind" }) ?? "openai_compatible";
-  const isGoogle = kind === "gemini_api_key" || kind === "gemini_code_assist";
+  const isOAuth = kind === "gemini_code_assist" || kind === "gemini_antigravity";
+  const isGoogle = kind === "gemini_api_key" || isOAuth;
   return (
     <>
       {immutableKind ? (
@@ -144,15 +150,16 @@ export function ModelSourceFormFields({
         name="apiKey"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>{kind === "gemini_code_assist" ? "OAuth JSON" : apiKeyLabel}</FormLabel>
+            <FormLabel>{isOAuth ? "OAuth JSON" : apiKeyLabel}</FormLabel>
             <FormControl>
               <Input {...field} type="password" autoComplete="new-password" placeholder={apiKeyPlaceholder} />
             </FormControl>
             {isGoogle ? (
               <p className="text-xs text-muted-foreground">
-                {kind === "gemini_code_assist"
+                {isOAuth
                   ? "Paste OAuth JSON with project, access_token and expiry_date (epoch milliseconds). For refresh, include refresh_token and matching client_id/client_secret. quota_scope is optional."
                   : "Paste a raw Gemini API key or credential JSON."}
+                {kind === "gemini_antigravity" ? ` ${t("gemini.accounts.importHelp")}` : ""}
                 {immutableKind ? " Leave blank to retain the existing credential." : ""}
               </p>
             ) : null}

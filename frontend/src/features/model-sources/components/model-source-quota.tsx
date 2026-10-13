@@ -6,9 +6,9 @@ export function ModelSourceQuota({ sourceId, disabled = false }: { sourceId: str
   const { snapshot, refresh } = useModelSourceQuota(sourceId);
   const data = snapshot.data;
   return (
-    <section aria-label="Code Assist quota" className="space-y-3 rounded-md border p-4 text-sm">
+    <section aria-label="Observed Google quota" className="space-y-3 rounded-md border p-4 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-medium">Code Assist quota</h3>
+        <h3 className="font-medium">Observed Google quota</h3>
         <Button type="button" variant="outline" size="sm" disabled={disabled || refresh.isPending || snapshot.isFetching}
           onClick={() => refresh.mutate()}>
           {refresh.isPending ? "Refreshing quota…" : "Refresh quota"}

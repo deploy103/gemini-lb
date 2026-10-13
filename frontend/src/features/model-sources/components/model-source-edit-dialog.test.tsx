@@ -10,7 +10,9 @@ import { ModelSourceSchema, ModelSourceUpdateRequestSchema, type ModelSource } f
 import { ModelSourceEditDialog } from "./model-source-edit-dialog";
 import { ModelSourceCreateDialog } from "./model-source-create-dialog";
 import { GoogleSourceDiagnosticsDialog } from "./google-source-diagnostics-dialog";
-import { createModelSource as createSource, listModelSources, updateModelSource } from "@/features/model-sources/api";
+import { GeminiAccountDialog } from "./gemini-account-dialog";
+import { ModelSourcesSettings } from "./model-sources-settings";
+import { completeGoogleConnection, createModelSource as createSource, listModelSources, updateModelSource } from "@/features/model-sources/api";
 
 function createModelSource(overrides: Partial<ModelSource> = {}): ModelSource {
   return {
@@ -54,7 +56,7 @@ function createModelSource(overrides: Partial<ModelSource> = {}): ModelSource {
 }
 
 describe("ModelSourceEditDialog", () => {
-  it("loads only saved Code Assist quota and explicitly refreshes observed buckets, retaining them on failure", async () => {
+  it.each(["gemini_code_assist", "gemini_antigravity"])("loads only saved %s quota and explicitly refreshes observed buckets, retaining them on failure", async (kind) => {
     const user = userEvent.setup();
     const getQuota = vi.fn(() => HttpResponse.json({ buckets: [], updatedAt: null }));
     const postQuota = vi.fn()
@@ -69,7 +71,7 @@ describe("ModelSourceEditDialog", () => {
     expect(screen.queryByRole("button", { name: "Refresh quota" })).not.toBeInTheDocument();
     expect(getQuota).not.toHaveBeenCalled();
     apiKeyView.unmount();
-    renderWithProviders(<ModelSourceEditDialog {...props} source={createModelSource({ kind: "gemini_code_assist" })} />);
+    renderWithProviders(<ModelSourceEditDialog {...props} source={createModelSource({ kind })} />);
     expect(await screen.findByText("Quota unknown — not yet queried.")).toBeInTheDocument();
     expect(postQuota).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Refresh quota" }));
@@ -86,6 +88,7 @@ describe("ModelSourceEditDialog", () => {
 
   it.each([
     ["gemini_api_key", "Google Gemini API key", "https://generativelanguage.googleapis.com", "test-api-key"],
+    ["gemini_antigravity", "Google Antigravity personal account (OAuth)", "https://daily-cloudcode-pa.googleapis.com", JSON.stringify({ project: "personal-project", access_token: "personal-token", expiry_date: 1900000000000 })],
     ["gemini_code_assist", "Google Gemini Code Assist (OAuth)", "https://cloudcode-pa.googleapis.com", JSON.stringify({ project: "test-project", access_token: "test-token", expiry_date: 1900000000000 })],
   ])("creates and edits %s through the public API without exposing or replacing secrets", async (kind, label, baseUrl, secret) => {
     const user = userEvent.setup();
@@ -99,7 +102,7 @@ describe("ModelSourceEditDialog", () => {
     expect(screen.getByLabelText("Base URL")).toHaveValue(baseUrl);
     await user.type(screen.getByLabelText("Name"), "Google source");
     await user.type(screen.getByLabelText("Models"), "gemini-2.5-flash");
-    const secretInput = screen.getByLabelText(kind === "gemini_code_assist" ? "OAuth JSON" : "Upstream API key");
+    const secretInput = screen.getByLabelText(kind !== "gemini_api_key" ? "OAuth JSON" : "Upstream API key");
     expect(secretInput).toHaveAttribute("type", "password");
     await user.click(secretInput);
     await user.paste(secret);
@@ -119,12 +122,76 @@ describe("ModelSourceEditDialog", () => {
     expect(screen.getByText("Provider (cannot be changed)")).toBeInTheDocument();
     expect(screen.getByText(label)).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Provider" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText(kind === "gemini_code_assist" ? "OAuth JSON" : "Upstream API key")).toHaveValue("");
+    expect(screen.getByLabelText(kind !== "gemini_api_key" ? "OAuth JSON" : "Upstream API key")).toHaveValue("");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onEdit).toHaveBeenCalledTimes(1));
     expect(onEdit.mock.calls[0][1]).not.toHaveProperty("apiKey");
     expect(onEdit.mock.calls[0][1]).not.toHaveProperty("kind");
     expect((await onEdit.mock.results[0].value).kind).toBe(kind);
+  });
+
+  it.each([false, true])("connects personal accounts with full callback and consent=%s, resetting a consumed login on failure", async (consent) => {
+    const user = userEvent.setup();
+    let attempt = 0;
+    let completeCount = 0;
+    const callback = "http://localhost:51121/oauth-callback?code=personal-code&state=personal-state";
+    server.use(
+      http.post("/api/model-sources/google/start", async ({ request }) => {
+        const body = await request.json();
+        if (JSON.stringify(body) !== JSON.stringify({ kind: "gemini_antigravity" })) return new HttpResponse(null, { status: 400 });
+        attempt += 1;
+        return HttpResponse.json({ authorizationUrl: `https://accounts.google.com/login?attempt=${attempt}`, transaction: `login-${attempt}`, expiresIn: 600, kind: "gemini_antigravity" });
+      }),
+      http.post("/api/model-sources/google/complete", async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        if (body.code !== callback || body.allowFreeSetup !== consent || body.transaction !== `login-${attempt}` || "kind" in body || "project" in body) {
+          return HttpResponse.json({ error: { message: "Invalid personal connection payload" } }, { status: 400 });
+        }
+        completeCount += 1;
+        if (completeCount === 1) return HttpResponse.json({ error: { code: "upstream_error", message: "Google requires a fresh login" } }, { status: 502 });
+        return HttpResponse.json(createModelSource({ kind: "gemini_antigravity", healthStatus: "unknown" }));
+      }),
+    );
+    const close = vi.fn();
+    renderWithProviders(<GeminiAccountDialog busy={false} onClose={close} onCreate={createSource} onConnect={completeGoogleConnection} />);
+    expect(screen.getByRole("radio", { name: /Personal \/ free \/ AI Pro/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Enterprise Code Assist/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Allow free initialization/ })).not.toBeChecked();
+    if (consent) await user.click(screen.getByRole("checkbox", { name: /Allow free initialization/ }));
+    await user.click(screen.getByRole("button", { name: "Start Google login" }));
+    expect(await screen.findByRole("link", { name: "Open Google sign-in" })).toHaveAttribute("href", "https://accounts.google.com/login?attempt=1");
+    await user.type(screen.getByLabelText("Full localhost callback URL"), callback);
+    await user.click(screen.getByRole("button", { name: "Connect account" }));
+    expect(await screen.findByText("Google requires a fresh login")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Full localhost callback URL")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Google sign-in" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect account" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Allow free initialization/ })).toHaveProperty("checked", consent);
+    await user.click(screen.getByRole("button", { name: "Start Google login" }));
+    expect(await screen.findByRole("link", { name: "Open Google sign-in" })).toHaveAttribute("href", "https://accounts.google.com/login?attempt=2");
+    expect(screen.getByLabelText("Full localhost callback URL")).toHaveValue("");
+    await user.type(screen.getByLabelText("Full localhost callback URL"), callback);
+    await user.click(screen.getByRole("button", { name: "Connect account" }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  });
+
+  it.each(["gemini_antigravity", "gemini_code_assist"])("imports %s through the primary account controls and shows the registered source", async (kind) => {
+    const user = userEvent.setup();
+    renderWithProviders(<ModelSourcesSettings geminiOnly />);
+    await user.click(await screen.findByRole("button", { name: "Add account" }));
+    await user.click(screen.getByRole("radio", { name: "Import OAuth JSON" }));
+    if (kind === "gemini_code_assist") await user.click(screen.getByRole("radio", { name: "Enterprise Code Assist (legacy)" }));
+    await user.type(screen.getByLabelText("Name"), "Imported personal account");
+    const credential = JSON.stringify({ project: "personal-project", access_token: "personal-token", expiry_date: 1900000000000 });
+    await user.click(screen.getByLabelText("OAuth JSON"));
+    await user.paste(credential);
+    await user.click(screen.getByRole("button", { name: "Connect account" }));
+    expect(await screen.findByText("Imported personal account")).toBeInTheDocument();
+    expect(screen.queryByText(credential)).not.toBeInTheDocument();
+    expect(screen.getByText(kind === "gemini_antigravity" ? "https://daily-cloudcode-pa.googleapis.com" : "https://cloudcode-pa.googleapis.com")).toBeInTheDocument();
+    const saved = (await listModelSources()).sources.find((source) => source.name === "Imported personal account");
+    expect(saved?.kind).toBe(kind);
+    expect(saved?.healthStatus).toBe("unknown");
   });
 
   it("prefills existing fields including pricing and models", () => {
@@ -470,9 +537,9 @@ describe("ModelSourceEditDialog", () => {
 });
 
 describe("GoogleSourceDiagnosticsDialog", () => {
-  it("reports failures and explicitly adds selected models without replacing current operator overrides", async () => {
+  it.each(["catalog", "antigravity"])("reports failures and explicitly adds %s models without replacing current operator overrides", async (origin) => {
     const user = userEvent.setup();
-    const source = createModelSource({ name: "Google discovery", kind: "gemini_api_key",
+    const source = createModelSource({ name: "Google discovery", kind: origin === "antigravity" ? "gemini_antigravity" : "gemini_api_key",
       models: [{ ...createModelSource().models[0], model: "gemini-2.5-flash", inputPer1M: 0.75,
         isEnabled: false, supportsVision: true }] });
     let saved = source;
@@ -487,7 +554,7 @@ describe("GoogleSourceDiagnosticsDialog", () => {
     let fail = true;
     server.use(http.post("/api/model-sources/:id/discover", () => fail
       ? HttpResponse.json({ error: { code: "google_discovery_failed", message: "Check Google project access." } }, { status: 400 })
-      : HttpResponse.json({ origin: "catalog", checkedAt: "2026-10-13T00:00:00Z", elapsedMs: 73,
+      : HttpResponse.json({ origin, checkedAt: "2026-10-13T00:00:00Z", elapsedMs: 73,
         models: [{ model: "gemini-2.5-flash", inputPer1M: 0, supportsVision: false },
           { model: "gemini-2.5-pro", contextWindow: 4096, maxOutputTokens: 96 },
           { model: "text-embedding-004", supportsStreaming: false }] })));
@@ -500,6 +567,7 @@ describe("GoogleSourceDiagnosticsDialog", () => {
     fail = false;
     await user.click(screen.getByRole("button", { name: "Check connection and discover models" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Metadata check succeeded · 3 models · 73 ms");
+    if (origin === "antigravity") expect(screen.getByText("Observed Antigravity account catalog from Google. Inference access and subscription status are not verified.")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /gemini-2.5-flash/ })).toBeDisabled();
     await user.type(screen.getByLabelText("Search discovered models"), "pro");
     expect(screen.queryByRole("checkbox", { name: /text-embedding/ })).not.toBeInTheDocument();

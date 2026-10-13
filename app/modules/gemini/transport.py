@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import hashlib
 import json
 import math
 import re
@@ -24,6 +25,7 @@ from app.core.utils.shared_future import _await_cleanup_deferring_cancellation, 
 from app.core.utils.sse import extract_sse_data
 from app.db.models import ModelSource
 from app.db.session import get_background_session
+from app.modules.gemini import antigravity
 from app.modules.gemini.credentials import GoogleCredential, parse_google_credential
 from app.modules.model_sources.forwarding import SourceResponsesStream, SourceStreamTransport, SourceUsageHolder
 
@@ -217,29 +219,41 @@ async def open_google(
 ) -> tuple[AsyncExitStack, aiohttp.ClientResponse, GoogleCredential]:
     stack = AsyncExitStack()
     try:
-        credential = await _current_oauth(source) if source.kind == "gemini_code_assist" else source_credential(source)
+        credential = source_credential(source) if source.kind == "gemini_api_key" else await _current_oauth(source)
         headers = {"content-type": "application/json"}
         if source.kind == "gemini_api_key":
             headers["x-goog-api-key"] = credential.api_key or ""
         else:
             headers["authorization"] = f"Bearer {credential.access_token}"
+            if source.kind == "gemini_antigravity":
+                headers["user-agent"] = antigravity.USER_AGENT
             if payload is not None:
                 payload = json.loads(json.dumps(payload))
-                if "project" in payload or any(
-                    method in path
-                    for method in (
-                        "generateContent",
-                        "streamGenerateContent",
-                        "retrieveUserQuota",
+                if (
+                    (source.kind == "gemini_antigravity" and "countTokens" not in path)
+                    or "project" in payload
+                    or any(
+                        method in path
+                        for method in (
+                            "generateContent",
+                            "streamGenerateContent",
+                            "retrieveUserQuota",
+                        )
                     )
                 ):
                     payload["project"] = credential.project
-                if "loadCodeAssist" in path:
+                if source.kind == "gemini_antigravity":
+                    inner = payload.get("request")
+                    if isinstance(inner, dict):
+                        session_id = inner.pop("session_id", None)
+                        if isinstance(session_id, str) and "countTokens" not in path:
+                            inner["sessionId"] = str(int(hashlib.sha256(session_id.encode()).hexdigest()[:15], 16))
+                if "loadCodeAssist" in path and source.kind != "gemini_antigravity":
                     payload["cloudaicompanionProject"] = credential.project
                     metadata = payload.setdefault("metadata", {})
                     if isinstance(metadata, dict):
                         metadata["duetProject"] = credential.project
-                if isinstance(payload.get("metadata"), dict):
+                if source.kind != "gemini_antigravity" and isinstance(payload.get("metadata"), dict):
                     payload["metadata"]["duetProject"] = credential.project
         http = await stack.enter_async_context(lease_model_source_session())
         response = await stack.enter_async_context(
@@ -299,8 +313,13 @@ async def google_json(source: ModelSource, path: str, payload: dict[str, JsonVal
                     raise GoogleError(502, "Google returned an invalid quota fraction")
                 if any(not isinstance(value, str) for key, value in bucket.items() if key != "remainingFraction"):
                     raise GoogleError(502, "Google returned an invalid quota bucket")
-        if "loadCodeAssist" in path and (
-            not result.get("currentTier") or result.get("cloudaicompanionProject") not in (None, credential.project)
+        if (
+            "loadCodeAssist" in path
+            and source.kind == "gemini_code_assist"
+            and (
+                not isinstance(result.get("currentTier"), dict)
+                or antigravity.account_project(result) not in (None, credential.project)
+            )
         ):
             raise GoogleError(
                 409, "Google account/project is not onboarded or mismatched; use the official Gemini CLI first"

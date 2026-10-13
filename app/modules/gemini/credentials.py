@@ -7,8 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-GeminiSourceKind = Literal["gemini_api_key", "gemini_code_assist"]
-GEMINI_SOURCE_KINDS = frozenset({"gemini_api_key", "gemini_code_assist"})
+GeminiSourceKind = Literal["gemini_api_key", "gemini_code_assist", "gemini_antigravity"]
+GEMINI_SOURCE_KINDS = frozenset({"gemini_api_key", "gemini_code_assist", "gemini_antigravity"})
 
 
 class GoogleCredential(BaseModel):

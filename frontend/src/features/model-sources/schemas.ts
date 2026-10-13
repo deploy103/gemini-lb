@@ -57,13 +57,17 @@ export const GoogleConnectionSchema = z.object({
   authorizationUrl: z.url(),
   transaction: z.string(),
   expiresIn: z.number(),
+  kind: z.enum(["gemini_antigravity", "gemini_code_assist"]).default("gemini_code_assist"),
 });
+
+export type GoogleSourceKind = "gemini_antigravity" | "gemini_code_assist";
 
 export type GoogleConnectionCompleteRequest = {
   transaction: string;
   code: string;
   name?: string;
   project?: string;
+  allowFreeSetup?: boolean;
   models: ModelSourceModelInput[];
 };
 
@@ -85,7 +89,7 @@ export const ModelSourceModelInputSchema = z.object({
 
 export const ModelSourceCreateRequestSchema = z.object({
   name: z.string().min(1).max(128),
-  kind: z.enum(["openai_compatible", "gemini_api_key", "gemini_code_assist"]).optional(),
+  kind: z.enum(["openai_compatible", "gemini_api_key", "gemini_code_assist", "gemini_antigravity"]).optional(),
   baseUrl: z.string().min(1).max(2048),
   apiKey: z.string().min(1).nullable().optional(),
   supportsChatCompletions: z.boolean().optional(),
@@ -118,7 +122,7 @@ export type ModelSourceCreateRequest = z.infer<typeof ModelSourceCreateRequestSc
 export type ModelSourceUpdateRequest = z.infer<typeof ModelSourceUpdateRequestSchema>;
 
 export const GoogleDiscoverySchema = z.object({
-  origin: z.enum(["catalog", "quota"]),
+  origin: z.enum(["catalog", "quota", "antigravity"]),
   models: z.array(ModelSourceModelInputSchema),
   checkedAt: z.iso.datetime({ offset: true }),
   elapsedMs: z.number().int().nonnegative(),

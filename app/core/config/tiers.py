@@ -55,6 +55,9 @@ SETTING_TIERS: Final[dict[str, Tier]] = {
     "proxy_downstream_websocket_idle_timeout_seconds": "T3",
     # bind host of the OAuth callback listener; policy §2 T1 example
     "oauth_callback_host": "T1",
+    "gemini_antigravity_client_id": "T1",
+    # Environment seeds the encrypted source; refresh reads that source only.
+    "gemini_antigravity_client_secret": "T2",
     "auth_guardian_enabled": "T3",
     "transcription_request_budget_seconds": "T3",
     # path to a replacement quota-key registry; deployment artefact, not behaviour
