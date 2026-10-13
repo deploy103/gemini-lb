@@ -33,6 +33,9 @@ const ReportsPage = lazy(() =>
 const AccountsPage = lazy(() =>
   import("@/features/accounts/components/accounts-page").then((m) => ({ default: m.AccountsPage })),
 );
+const GeminiAccountsPage = lazy(() =>
+  import("@/features/model-sources/components/gemini-accounts-page").then((m) => ({ default: m.GeminiAccountsPage })),
+);
 const AutomationsPage = lazy(() =>
   import("@/features/automations/components/automations-page").then((m) => ({ default: m.AutomationsPage })),
 );
@@ -116,9 +119,11 @@ export default function App() {
                 the card that started it rather than on the dashboard. */}
             <Route path="/login" element={<Navigate to={signedInLoginDestination()} replace />} />
             <Route element={<RouteGuard />}>
-              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<DashboardPage gemini />} />
               <Route path="/reports" element={<ReportsPage />} />
-              <Route path="/accounts" element={<AccountsPage />} />
+              <Route path="/accounts" element={<GeminiAccountsPage />} />
+              <Route path="/legacy/accounts" element={<AccountsPage />} />
+              <Route path="/legacy/dashboard" element={<DashboardPage />} />
               <Route path="/automations" element={<AutomationsPage />} />
               <Route path="/apis" element={<ApisPage />} />
               <Route path="/settings" element={<SettingsPage />} />

@@ -212,7 +212,7 @@ describe("dashboard flow integration", () => {
       }),
     );
 
-    window.history.pushState({}, "", "/dashboard");
+    window.history.pushState({}, "", "/legacy/dashboard");
     const { container } = render(
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>

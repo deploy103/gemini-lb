@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 
 from fastapi import APIRouter, Body, Depends, Request, Response
 
@@ -15,9 +16,19 @@ from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
 from app.core.utils.time import utcnow
 from app.db.models import GeminiQuota
 from app.dependencies import ModelSourcesContext, get_model_sources_context
+from app.modules.dashboard_auth.service import DASHBOARD_SESSION_COOKIE
+from app.modules.gemini.oauth import (
+    CONNECTION_COOKIE,
+    TRANSACTION_TTL,
+    complete_connection,
+    connection_binding,
+    start_connection,
+)
 from app.modules.gemini.repository import save_quota
 from app.modules.gemini.transport import GoogleError, google_json
 from app.modules.model_sources.schemas import (
+    GoogleConnectionCompleteRequest,
+    GoogleConnectionStartResponse,
     ModelSourceCreateRequest,
     ModelSourceQuotaResponse,
     ModelSourceResponse,
@@ -38,6 +49,56 @@ async def list_model_sources(
     context: ModelSourcesContext = Depends(get_model_sources_context),
 ) -> ModelSourcesResponse:
     return ModelSourcesResponse(sources=await context.service.list_sources())
+
+
+@router.post("/google/start", response_model=GoogleConnectionStartResponse)
+async def start_google_connection(
+    request: Request,
+    response: Response,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+) -> GoogleConnectionStartResponse:
+    cookie = secrets.token_urlsafe(32)
+    url, transaction = start_connection(cookie + ":" + request.cookies.get(DASHBOARD_SESSION_COOKIE, ""))
+    response.set_cookie(
+        CONNECTION_COOKIE,
+        cookie,
+        max_age=TRANSACTION_TTL,
+        httponly=True,
+        samesite="strict",
+        secure=request.url.scheme == "https",
+        path="/api/model-sources/google",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return GoogleConnectionStartResponse(authorization_url=url, transaction=transaction, expires_in=TRANSACTION_TTL)
+
+
+@router.post("/google/complete", response_model=ModelSourceResponse)
+async def complete_google_connection(
+    request: Request,
+    response: Response,
+    payload: GoogleConnectionCompleteRequest,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+    context: ModelSourcesContext = Depends(get_model_sources_context),
+) -> ModelSourceResponse:
+    email, credential = await complete_connection(
+        payload.transaction, payload.code, connection_binding(request), payload.project
+    )
+    created = await create_model_source(
+        request,
+        ModelSourceCreateRequest(
+            name=payload.name or email,
+            kind="gemini_code_assist",
+            base_url="https://cloudcode-pa.googleapis.com",
+            api_key=credential.model_dump_json(exclude_none=True),
+            supports_chat_completions=False,
+            models=payload.models,
+        ),
+        principal,
+        context,
+    )
+    response.delete_cookie(CONNECTION_COOKIE, path="/api/model-sources/google")
+    response.headers["Cache-Control"] = "no-store"
+    return created
 
 
 @router.post("/", response_model=ModelSourceResponse)

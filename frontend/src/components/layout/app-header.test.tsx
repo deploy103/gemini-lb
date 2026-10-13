@@ -65,7 +65,7 @@ describe("AppHeader", () => {
       ),
     );
 
-    renderHeader();
+    renderHeader("/legacy/dashboard");
 
     expect(await screen.findAllByText("99+")).not.toHaveLength(0);
   });
@@ -84,7 +84,7 @@ describe("AppHeader", () => {
       ),
     );
 
-    renderHeader();
+    renderHeader("/legacy/dashboard");
 
     expect(await screen.findAllByText("8")).not.toHaveLength(0);
   });
@@ -101,7 +101,7 @@ describe("AppHeader", () => {
       ),
     );
 
-    renderHeader();
+    renderHeader("/legacy/dashboard");
 
     await screen.findByRole("link", { name: /Accounts/i });
     expect(screen.queryByText("99+")).not.toBeInTheDocument();
@@ -119,7 +119,7 @@ describe("AppHeader", () => {
       ),
     );
 
-    renderHeader();
+    renderHeader("/legacy/dashboard");
 
     await screen.findByRole("link", { name: /Accounts/i });
     await waitFor(() => {

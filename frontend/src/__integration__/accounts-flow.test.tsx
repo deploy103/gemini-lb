@@ -9,7 +9,7 @@ describe("accounts flow integration", () => {
   it("supports account selection and pause/resume actions", async () => {
     const user = userEvent.setup({ delay: null });
 
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/legacy/accounts");
     renderWithProviders(<App />);
 
     expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
@@ -36,7 +36,7 @@ describe("accounts flow integration", () => {
   it("lets operators set, search, and clear an account alias", async () => {
     const user = userEvent.setup({ delay: null });
 
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/legacy/accounts");
     renderWithProviders(<App />);
 
     expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();

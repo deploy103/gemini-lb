@@ -82,6 +82,20 @@ class ModelSourcesResponse(DashboardModel):
     sources: list[ModelSourceResponse] = Field(default_factory=list)
 
 
+class GoogleConnectionStartResponse(DashboardModel):
+    authorization_url: str
+    transaction: str
+    expires_in: int
+
+
+class GoogleConnectionCompleteRequest(DashboardModel):
+    transaction: str = Field(min_length=1, max_length=4096, repr=False)
+    code: str = Field(min_length=1, max_length=2048, repr=False)
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    project: str | None = Field(default=None, min_length=1, max_length=256)
+    models: list[ModelSourceModelInput] = Field(min_length=1, max_length=100)
+
+
 class ModelSourceQuotaResponse(DashboardModel):
     buckets: list[dict[str, JsonValue]] = Field(default_factory=list)
     updated_at: datetime | None = None

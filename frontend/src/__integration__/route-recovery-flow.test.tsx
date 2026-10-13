@@ -44,11 +44,11 @@ vi.mock("@/features/dashboard/components/dashboard-page", async (importOriginal)
 
   return {
     ...actual,
-    DashboardPage() {
+    DashboardPage(props: Parameters<typeof DashboardPage>[0]) {
       if (dashboardMockState.failed) {
         throw new Error("Dashboard route render failed");
       }
-      return <DashboardPage />;
+      return <DashboardPage {...props} />;
     },
   };
 });
@@ -104,7 +104,7 @@ describe("route recovery flow integration", () => {
 
   it("contains a rejected lazy route and exposes keyboard recovery", async () => {
     const user = userEvent.setup({ delay: null });
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/legacy/accounts");
 
     renderWithProviders(<App />);
     const recovery = await screen.findByTestId("route-load-error");

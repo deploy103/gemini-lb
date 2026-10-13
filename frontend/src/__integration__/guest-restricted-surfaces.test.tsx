@@ -10,6 +10,7 @@ import {
   GUEST_PERMISSIONS,
   createAccountSummary,
   createDashboardAuthSession,
+  createModelSource,
   createUpstreamProxyAdmin,
 } from "@/test/mocks/factories";
 import { server } from "@/test/mocks/server";
@@ -109,11 +110,10 @@ describe("guest restricted surfaces integration", () => {
     expect(await screen.findByRole("heading", { name: "APIs" })).toBeInTheDocument();
     expect(await screen.findByText("API keys are managed by administrators")).toBeInTheDocument();
     expect(screen.getByText("Sign in as an administrator to view and manage API keys.")).toBeInTheDocument();
-    // Header badge query proves the page settled its network work.
-    await waitFor(() => expect(paths).toContain("/api/accounts"));
 
     expect(screen.queryByRole("button", { name: "Create API Key" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(paths).not.toContain("/api/accounts");
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
@@ -141,10 +141,10 @@ describe("guest restricted surfaces integration", () => {
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
-  it("renders masked accounts, hides OAuth help, and skips the upstream-proxy query on /accounts", async () => {
+  it("renders masked legacy accounts, hides OAuth help, and skips the upstream-proxy query", async () => {
     useGuestSession();
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/legacy/accounts");
 
     renderWithProviders(<App />);
 
@@ -155,6 +155,26 @@ describe("guest restricted surfaces integration", () => {
     expect(screen.getAllByText(/Personal \/ unknown workspace/).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Need help?" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
+    expect(restrictedRequests(paths)).toEqual([]);
+  });
+
+  it("shows native Gemini accounts read-only without Codex authentication or credit queries", async () => {
+    useGuestSession();
+    server.use(http.get("/api/model-sources/", () => HttpResponse.json({ sources: [
+      createModelSource({ kind: "gemini_api_key", name: "Google API key", baseUrl: "https://generativelanguage.googleapis.com" }),
+      createModelSource({ id: "legacy-source", name: "Legacy provider" }),
+    ] })));
+    const paths = spyRequestPaths();
+    window.history.pushState({}, "", "/accounts");
+    renderWithProviders(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Gemini accounts", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText("Google API key", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("Legacy provider")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Toggle Google API key model source" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit Google API key model source" })).toBeDisabled();
+    expect(paths).not.toContain("/api/accounts");
     expect(restrictedRequests(paths)).toEqual([]);
   });
 
@@ -229,7 +249,7 @@ describe("guest restricted surfaces integration", () => {
     expect(screen.queryByText("API keys are managed by administrators")).not.toBeInTheDocument();
   });
 
-  it("keeps the upstream-proxy query and OAuth help (connect address) for writers on /accounts (regression)", async () => {
+  it("keeps the upstream-proxy query and OAuth help for writers on /legacy/accounts", async () => {
     const user = userEvent.setup();
     server.use(
       http.get("/api/settings/runtime/connect-address", () =>
@@ -237,7 +257,7 @@ describe("guest restricted surfaces integration", () => {
       ),
     );
     const paths = spyRequestPaths();
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/legacy/accounts");
 
     renderWithProviders(<App />);
 
@@ -269,7 +289,7 @@ describe("guest restricted surfaces integration", () => {
     expect(screen.queryByText("Primary pool")).not.toBeInTheDocument();
     settingsRender.unmount();
 
-    window.history.pushState({}, "", "/accounts");
+    window.history.pushState({}, "", "/legacy/accounts");
     const accountsRender = renderWithProviders(<App />);
     accountsRender.queryClient.setQueryData(["settings", "upstream-proxy"], cached);
 

@@ -53,6 +53,20 @@ export const ModelSourcesResponseSchema = z.object({
   sources: z.array(ModelSourceSchema).default([]),
 });
 
+export const GoogleConnectionSchema = z.object({
+  authorizationUrl: z.url(),
+  transaction: z.string(),
+  expiresIn: z.number(),
+});
+
+export type GoogleConnectionCompleteRequest = {
+  transaction: string;
+  code: string;
+  name?: string;
+  project?: string;
+  models: ModelSourceModelInput[];
+};
+
 export const ModelSourceModelInputSchema = z.object({
   model: z.string().min(1).max(255),
   displayName: z.string().max(255).nullable().optional(),

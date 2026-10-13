@@ -187,6 +187,17 @@ async def _assert_guest_write_denied(client: AsyncClient) -> None:
     assert blocked_update.status_code == 403
     assert blocked_update.json()["error"]["code"] == "read_only_access"
 
+    for path, body in [
+        ("/api/model-sources/google/start", {}),
+        (
+            "/api/model-sources/google/complete",
+            {"transaction": "ticket", "code": "code", "models": [{"model": "gemini-2.5-flash"}]},
+        ),
+    ]:
+        blocked_connection = await client.post(path, json=body)
+        assert blocked_connection.status_code == 403
+        assert blocked_connection.json()["error"]["code"] == "read_only_access"
+
     blocked_auth_export = await client.post("/api/accounts/missing/export/auth")
     assert blocked_auth_export.status_code == 403
     assert blocked_auth_export.json()["error"]["code"] == "permission_required"
