@@ -19,6 +19,8 @@ from app.core.utils.time import utcnow
 from app.db.models import GeminiQuota
 from app.dependencies import ModelSourcesContext, get_model_sources_context
 from app.modules.dashboard_auth.service import DASHBOARD_SESSION_COOKIE
+from app.modules.gemini import antigravity
+from app.modules.gemini.credentials import GEMINI_SOURCE_KINDS
 from app.modules.gemini.discovery import discover_google_models
 from app.modules.gemini.oauth import (
     CONNECTION_COOKIE,
@@ -31,6 +33,7 @@ from app.modules.gemini.repository import save_quota
 from app.modules.gemini.transport import GoogleError, google_json
 from app.modules.model_sources.schemas import (
     GoogleConnectionCompleteRequest,
+    GoogleConnectionStartRequest,
     GoogleConnectionStartResponse,
     GoogleDiscoveryResponse,
     ModelSourceCreateRequest,
@@ -59,10 +62,11 @@ async def list_model_sources(
 async def start_google_connection(
     request: Request,
     response: Response,
+    payload: GoogleConnectionStartRequest = Body(default=GoogleConnectionStartRequest()),
     principal: DashboardPrincipal = Depends(require_dashboard_write_access),
 ) -> GoogleConnectionStartResponse:
     cookie = secrets.token_urlsafe(32)
-    url, transaction = start_connection(cookie + ":" + request.cookies.get(DASHBOARD_SESSION_COOKIE, ""))
+    url, transaction = start_connection(cookie + ":" + request.cookies.get(DASHBOARD_SESSION_COOKIE, ""), payload.kind)
     response.set_cookie(
         CONNECTION_COOKIE,
         cookie,
@@ -73,7 +77,9 @@ async def start_google_connection(
         path="/api/model-sources/google",
     )
     response.headers["Cache-Control"] = "no-store"
-    return GoogleConnectionStartResponse(authorization_url=url, transaction=transaction, expires_in=TRANSACTION_TTL)
+    return GoogleConnectionStartResponse(
+        authorization_url=url, transaction=transaction, expires_in=TRANSACTION_TTL, kind=payload.kind
+    )
 
 
 @router.post("/google/complete", response_model=ModelSourceResponse)
@@ -84,15 +90,15 @@ async def complete_google_connection(
     principal: DashboardPrincipal = Depends(require_dashboard_write_access),
     context: ModelSourcesContext = Depends(get_model_sources_context),
 ) -> ModelSourceResponse:
-    email, credential = await complete_connection(
-        payload.transaction, payload.code, connection_binding(request), payload.project
+    kind, email, credential = await complete_connection(
+        payload.transaction, payload.code, connection_binding(request), payload.project, payload.allow_free_setup
     )
     created = await create_model_source(
         request,
         ModelSourceCreateRequest(
             name=payload.name or email,
-            kind="gemini_code_assist",
-            base_url="https://cloudcode-pa.googleapis.com",
+            kind=kind,
+            base_url=antigravity.BASE_URL if kind == "gemini_antigravity" else "https://cloudcode-pa.googleapis.com",
             api_key=credential.model_dump_json(exclude_none=True),
             supports_chat_completions=False,
             models=payload.models,
@@ -197,10 +203,13 @@ async def refresh_google_source_quota(
     source = await context.repository.get_by_id(source_id)
     if source is None:
         raise DashboardNotFoundError("Model source not found")
-    if source.kind != "gemini_code_assist":
-        raise DashboardBadRequestError("Only Code Assist exposes Google quota; API-key quota is unknown")
+    if source.kind not in {"gemini_code_assist", "gemini_antigravity"} or not source.is_enabled:
+        raise DashboardBadRequestError("Enable a Google OAuth source before querying quota; API-key quota is unknown")
     try:
-        result = await google_json(source, "/v1internal:retrieveUserQuota", {})
+        if source.kind == "gemini_antigravity":
+            result = antigravity.model_quota(await google_json(source, "/v1internal:fetchAvailableModels", {}))
+        else:
+            result = await google_json(source, "/v1internal:retrieveUserQuota", {})
         await save_quota(source_id, result)
     except GoogleError as error:
         raise DashboardBadRequestError(_google_dashboard_message(error), code="google_quota_failed") from None
@@ -225,7 +234,7 @@ async def discover_google_source(
     source = await context.repository.get_by_id(source_id)
     if source is None:
         raise DashboardNotFoundError("Model source not found")
-    if source.kind not in {"gemini_api_key", "gemini_code_assist"} or not source.is_enabled:
+    if source.kind not in GEMINI_SOURCE_KINDS or not source.is_enabled:
         raise DashboardBadRequestError("Enable a Google source before checking its connection")
     started = time.monotonic()
     try:
@@ -246,7 +255,11 @@ async def discover_google_source(
         details={"source_id": source_id, "model_count": len(models)},
     )
     return GoogleDiscoveryResponse(
-        origin="quota" if source.kind == "gemini_code_assist" else "catalog",
+        origin="antigravity"
+        if source.kind == "gemini_antigravity"
+        else "quota"
+        if source.kind == "gemini_code_assist"
+        else "catalog",
         models=models,
         checked_at=utcnow(),
         elapsed_ms=int((time.monotonic() - started) * 1000),

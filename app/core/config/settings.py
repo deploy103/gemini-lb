@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.auth.dashboard_mode import DashboardAuthMode, normalize_dashboard_auth_proxy_header
@@ -334,6 +334,12 @@ class Settings(BaseSettings):
     # T3 → dashboard (deprecated env alias, remove next minor)
     proxy_downstream_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0)
     oauth_callback_host: str = _default_oauth_callback_host()
+    # Installed-client identity seeds encrypted per-source refresh credentials;
+    # an operator profile cannot default to a committed client secret.
+    gemini_antigravity_client_id: str | None = Field(default=None, validation_alias="GEMINI_LB_ANTIGRAVITY_CLIENT_ID")
+    gemini_antigravity_client_secret: SecretStr | None = Field(
+        default=None, validation_alias="GEMINI_LB_ANTIGRAVITY_CLIENT_SECRET", repr=False
+    )
     # T3 → dashboard (deprecated env alias, remove next minor)
     auth_guardian_enabled: bool = True
     # T3 → dashboard (deprecated env alias, remove next minor)

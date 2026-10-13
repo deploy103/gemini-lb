@@ -223,7 +223,7 @@ function ModelSourceEditForm({ source, busy, onSubmit, onClose }: ModelSourceEdi
           className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 pb-4"
           data-testid="model-source-edit-scroll-region"
         >
-          {source.kind === "gemini_code_assist" && <ModelSourceQuota sourceId={source.id} />}
+          {(source.kind === "gemini_code_assist" || source.kind === "gemini_antigravity") && <ModelSourceQuota sourceId={source.id} />}
           <ModelSourceFormFields
             control={form.control}
             immutableKind={source.kind}

@@ -209,14 +209,16 @@ test("primary accounts connects through Google and manages native Gemini credent
   await page.getByRole("button", { name: "Add account", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Add account" });
   await expect(dialog.getByRole("radio", { name: "Google login" })).toBeChecked();
+  await expect(dialog.getByRole("radio", { name: /Personal \/ free \/ AI Pro/ })).toBeChecked();
+  await expect(dialog.getByRole("checkbox")).not.toBeChecked();
   await dialog.getByRole("button", { name: "Start Google login" }).click();
   const googleLink = dialog.getByRole("link", { name: "Open Google sign-in" });
   await expect(googleLink).toBeVisible();
   const authorization = new URL((await googleLink.getAttribute("href"))!);
   expect(authorization.origin).toBe("https://accounts.google.com");
-  expect(authorization.searchParams.get("redirect_uri")).toBe("https://codeassist.google.com/authcode");
+  expect(authorization.searchParams.get("redirect_uri")).toBe("http://localhost:51121/oauth-callback");
   expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
-  await expect(dialog.getByLabel("Google authorization code")).toHaveAttribute("type", "password");
+  await expect(dialog.getByLabel("Full localhost callback URL")).toHaveAttribute("type", "password");
   await expect(dialog.getByText(/ChatGPT|OpenAI/)).toHaveCount(0);
 
   for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 568 }]) {
@@ -224,11 +226,12 @@ test("primary accounts connects through Google and manages native Gemini credent
     await expect(dialog).toBeInViewport({ ratio: 1 });
     await expect(dialog.getByRole("button", { name: "Connect account" })).toBeInViewport({ ratio: 1 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+    if (size.width >= 500) await expect(dialog.getByLabel("Full localhost callback URL")).toBeInViewport({ ratio: 1 });
     await page.screenshot({ path: testInfo.outputPath(`gemini-google-${size.width}.png`) });
     if (size.width < 500) {
       const scroll = dialog.locator("form > div").first();
       await scroll.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-      await expect(dialog.getByLabel("Google authorization code")).toBeInViewport({ ratio: 1 });
+      await expect(dialog.getByLabel("Full localhost callback URL")).toBeInViewport({ ratio: 1 });
       await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeInViewport({ ratio: 1 });
       await page.screenshot({ path: testInfo.outputPath(`gemini-google-scrolled-${size.width}.png`) });
       await scroll.evaluate((element) => { element.scrollTop = 0; });
@@ -237,7 +240,7 @@ test("primary accounts connects through Google and manages native Gemini credent
   await page.setViewportSize({ width: 1440, height: 900 });
   await dialog.getByRole("radio", { name: "Import OAuth JSON" }).check();
   await expect(dialog.getByLabel("OAuth JSON", { exact: true })).toHaveAttribute("type", "password");
-  await expect(dialog.getByText("Do not import Codex auth.json.", { exact: false })).toBeVisible();
+  await expect(dialog.getByText(/do not reuse Gemini CLI credentials or Codex auth.json/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("gemini-import.png") });
   await dialog.getByRole("radio", { name: "Gemini API key", exact: true }).check();
   await dialog.getByLabel("Name", { exact: true }).fill("Gemini browser regression");
@@ -366,7 +369,7 @@ test("Google discovery applies selected models through the real backend", async 
     await expect(dialog.getByText(/Model IDs observed in Google quota, not a complete catalog/)).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("discovery-quota.png"), animations: "disabled" });
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    const quota = page.getByRole("region", { name: "Code Assist quota" });
+    const quota = page.getByRole("region", { name: "Observed Google quota" });
     await expect(quota.getByText("Remaining: 75%", { exact: true })).toBeVisible();
     reject = true;
     await quota.getByRole("button", { name: "Refresh quota", exact: true }).click();

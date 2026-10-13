@@ -110,6 +110,10 @@ def _smoke_environment(data_dir: Path) -> dict[str, str]:
             # Suppress first-run token logging while keeping standard localhost
             # authentication active. The generated value never leaves this process tree.
             "CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN": secrets.token_urlsafe(32),
+            # Only construct consent URLs; browser smoke never exchanges these
+            # fixture credentials or opens Google. Do not inherit a real profile.
+            "GEMINI_LB_ANTIGRAVITY_CLIENT_ID": "fixture-client",
+            "GEMINI_LB_ANTIGRAVITY_CLIENT_SECRET": "fixture-private-secret",
         }
     )
     return environment

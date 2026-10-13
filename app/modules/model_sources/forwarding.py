@@ -85,6 +85,7 @@ class SourceUsage:
     input_tokens: int
     output_tokens: int
     cached_input_tokens: int = 0
+    reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

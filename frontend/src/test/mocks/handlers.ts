@@ -259,7 +259,7 @@ const SettingsPayloadSchema = z.looseObject({
 
 const ModelSourceCreatePayloadSchema = z.looseObject({
   name: z.string().optional(),
-  kind: z.enum(["openai_compatible", "gemini_api_key", "gemini_code_assist"]).optional(),
+  kind: z.enum(["openai_compatible", "gemini_api_key", "gemini_code_assist", "gemini_antigravity"]).optional(),
   baseUrl: z.string().optional(),
   supportsChatCompletions: z.boolean().optional(),
   supportsResponses: z.boolean().optional(),
@@ -2772,8 +2772,8 @@ export const handlers = [
 
   http.post("/api/model-sources/:sourceId/quota", ({ params }) => {
     const source = state.modelSources.find((item) => item.id === params.sourceId);
-    if (source?.kind !== "gemini_code_assist") {
-      return HttpResponse.json({ error: { code: "invalid_request", message: "Code Assist required" } }, { status: 400 });
+    if (source?.kind !== "gemini_code_assist" && source?.kind !== "gemini_antigravity") {
+      return HttpResponse.json({ error: { code: "invalid_request", message: "Google OAuth required" } }, { status: 400 });
     }
     return HttpResponse.json({ buckets: [], updatedAt: new Date().toISOString() });
   }),

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { startGoogleConnection } from "@/features/model-sources/api";
-import type { GoogleConnectionCompleteRequest, ModelSourceCreateRequest } from "@/features/model-sources/schemas";
+import type { GoogleConnectionCompleteRequest, GoogleSourceKind, ModelSourceCreateRequest } from "@/features/model-sources/schemas";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
 type Props = {
@@ -20,13 +20,15 @@ type Props = {
 export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Props) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<"google" | "apiKey" | "import">("google");
+  const [kind, setKind] = useState<GoogleSourceKind>("gemini_antigravity");
+  const [allowFreeSetup, setAllowFreeSetup] = useState(false);
   const [name, setName] = useState("");
   const [models, setModels] = useState("");
   const [secret, setSecret] = useState("");
   const [project, setProject] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const start = useMutation({ mutationFn: startGoogleConnection });
+  const start = useMutation({ mutationFn: () => startGoogleConnection(kind) });
   const working = busy || start.isPending;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -35,14 +37,24 @@ export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Prop
       .map((model) => ({ model, supportsStreaming: true, supportsTools: true, supportsVision: true }));
     try {
       if (mode === "google" && start.data) {
+        if (kind === "gemini_antigravity") {
+          let callback: URL;
+          try { callback = new URL(code.trim()); }
+          catch { throw new Error(t("gemini.accounts.callbackHelp")); }
+          if (callback.origin !== "http://localhost:51121" || callback.pathname !== "/oauth-callback" ||
+            !callback.searchParams.get("code") || !callback.searchParams.get("state")) {
+            throw new Error(t("gemini.accounts.callbackHelp"));
+          }
+        }
         await onConnect({
           transaction: start.data.transaction, code: code.trim(), name: name.trim() || undefined,
-          project: project.trim() || undefined, models: modelInputs,
+          project: kind === "gemini_code_assist" ? project.trim() || undefined : undefined,
+          allowFreeSetup: kind === "gemini_antigravity" && allowFreeSetup, models: modelInputs,
         });
       } else if (mode !== "google") {
         await onCreate({
-          name: name.trim(), kind: mode === "apiKey" ? "gemini_api_key" : "gemini_code_assist",
-          baseUrl: mode === "apiKey" ? "https://generativelanguage.googleapis.com" : "https://cloudcode-pa.googleapis.com",
+          name: name.trim(), kind: mode === "apiKey" ? "gemini_api_key" : kind,
+          baseUrl: mode === "apiKey" ? "https://generativelanguage.googleapis.com" : kind === "gemini_antigravity" ? "https://daily-cloudcode-pa.googleapis.com" : "https://cloudcode-pa.googleapis.com",
           apiKey: secret.trim(), supportsChatCompletions: false, supportsResponses: false, models: modelInputs,
         });
       } else {
@@ -51,12 +63,13 @@ export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Prop
       onClose();
     } catch (failure) {
       setError(getErrorMessageOrNull(failure));
+      if (mode === "google") { setCode(""); start.reset(); }
     }
   };
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !working) onClose(); }}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="px-6 pt-6 pr-12">
           <DialogTitle>{t("gemini.accounts.add")}</DialogTitle>
           <DialogDescription>{t("gemini.accounts.description")}</DialogDescription>
@@ -74,6 +87,14 @@ export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Prop
                 </label>
               ))}
             </fieldset>
+            {mode !== "apiKey" && <fieldset disabled={working} className="space-y-2">
+              <legend className="text-sm font-medium">{t("gemini.accounts.provider")}</legend>
+              {(["gemini_antigravity", "gemini_code_assist"] as const).map((provider) => <label key={provider} className="flex items-center gap-2 text-sm">
+                <input type="radio" name="google-provider" checked={kind === provider} onChange={() => {
+                  setKind(provider); setSecret(""); setCode(""); setError(null); start.reset();
+                }} />{t(`gemini.accounts.${provider}`)}
+              </label>)}
+            </fieldset>}
             {error || start.error ? <AlertMessage variant="error">{error ?? getErrorMessageOrNull(start.error)}</AlertMessage> : null}
             <label className="block space-y-1.5 text-sm font-medium">
               {t("apiKeys.table.name")}
@@ -87,22 +108,29 @@ export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Prop
             </label>
             <p className="text-xs text-muted-foreground">{t("gemini.discovery.optionalModels")}</p>
             {mode === "google" ? <>
-              <label className="block space-y-1.5 text-sm font-medium">
+              {kind === "gemini_code_assist" && <><label className="block space-y-1.5 text-sm font-medium">
                 {t("gemini.accounts.project")}
                 <Input value={project} onChange={(event) => setProject(event.target.value)} disabled={working}
                   maxLength={256} autoComplete="off" placeholder="Auto-detect" />
               </label>
-              <p className="text-xs text-muted-foreground">{t("gemini.accounts.projectHelp")}</p>
-              <Button type="button" variant="outline" disabled={working} onClick={() => { setCode(""); start.mutate(); }}>
+              <p className="text-xs text-muted-foreground">{t("gemini.accounts.projectHelp")}</p></>}
+              {kind === "gemini_antigravity" && <>
+                <p className="text-xs text-muted-foreground">{t("gemini.accounts.personalHelp")}</p>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" checked={allowFreeSetup} disabled={working} onChange={(event) => setAllowFreeSetup(event.target.checked)} />
+                  {t("gemini.accounts.freeConsent")}
+                </label>
+              </>}
+              <Button type="button" variant="outline" disabled={working} onClick={() => { setCode(""); setError(null); start.reset(); start.mutate(); }}>
                 {t("gemini.accounts.start")}
               </Button>
               {start.data ? <div className="space-y-3 rounded-lg border p-4">
                 <Button asChild><a href={start.data.authorizationUrl} target="_blank" rel="noopener noreferrer">
                   {t("gemini.accounts.openGoogle")}
                 </a></Button>
-                <p className="text-xs text-muted-foreground">{t("gemini.accounts.codeHelp")}</p>
+                <p className="text-xs text-muted-foreground">{t(kind === "gemini_antigravity" ? "gemini.accounts.callbackHelp" : "gemini.accounts.codeHelp")}</p>
                 <label className="block space-y-1.5 text-sm font-medium">
-                  {t("gemini.accounts.code")}
+                  {t(kind === "gemini_antigravity" ? "gemini.accounts.callback" : "gemini.accounts.code")}
                   <Input type="password" value={code} onChange={(event) => setCode(event.target.value)} required
                     disabled={working} maxLength={2048} autoComplete="new-password" />
                 </label>

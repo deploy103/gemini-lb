@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 from collections.abc import AsyncIterator
 from urllib.parse import urlencode
+from uuid import uuid4
 
 import aiohttp
 from fastapi import APIRouter, Request
@@ -29,6 +31,7 @@ from app.modules.api_keys.service import (
     ApiKeysService,
     ApiKeyUsageReservationData,
 )
+from app.modules.gemini import antigravity
 from app.modules.gemini.credentials import GoogleCredential
 from app.modules.gemini.repository import claim_session, eligible_sources, lookup_session, save_quota, set_cooldown
 from app.modules.gemini.transport import GoogleError, frame_payload, google_json, google_stream, source_credential
@@ -137,7 +140,9 @@ def _usage(payload: dict[str, JsonValue]) -> SourceUsage | None:
     output = candidates + thoughts
     if output == 0 and type(total) is int and total >= prompt:
         output = total - prompt
-    return SourceUsage(input_tokens=prompt, output_tokens=output, cached_input_tokens=min(prompt, cached))
+    return SourceUsage(
+        input_tokens=prompt, output_tokens=output, cached_input_tokens=min(prompt, cached), reasoning_tokens=thoughts
+    )
 
 
 async def _release(reservation: ApiKeyUsageReservationData | None) -> None:
@@ -227,7 +232,11 @@ async def _stream_body(
             # This is the outermost body: charge only content handed to the
             # ASGI transport, never an event merely prefetched by Google I/O.
             owner.content_delivered |= delivered
-            yield frame
+            yield (
+                f"data: {json.dumps(response, ensure_ascii=False)}\n\n"
+                if owner.source.kind == "gemini_antigravity"
+                else frame
+            )
         if holder.terminal_kind != "completed":
             raise GoogleError(502, "Google stream ended without finishing every candidate")
         await owner.finish(status="success")
@@ -272,8 +281,24 @@ async def _dispatch(
     raw_session = request.headers.get("x-gemini-lb-session") or (
         inner.get("session_id") if isinstance(inner, dict) else None
     )
+    if raw_session is None and kind == "gemini_antigravity" and isinstance(inner, dict):
+        # Native SDKs do not echo source headers. Keep appended tool/signature
+        # turns on the first turn's account, scoped by gateway key and provider.
+        contents = inner.get("contents")
+        if isinstance(contents, list):
+            first_user = next(
+                (item for item in contents if isinstance(item, dict) and item.get("role", "user") == "user"), None
+            )
+            if first_user is not None:
+                raw_session = (
+                    "native:"
+                    + hashlib.sha256(json.dumps(first_user, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+                )
+                inner["session_id"] = raw_session
     if raw_session is not None and (not isinstance(raw_session, str) or not 1 <= len(raw_session) <= 512):
         raise GoogleError(400, "Session ID must be a string of 1–512 characters")
+    if kind == "gemini_antigravity" and isinstance(inner, dict) and raw_session is not None:
+        inner["session_id"] = raw_session
     session_id = raw_session
     pin = request.headers.get("x-gemini-lb-account")
     existing = await lookup_session(api_key.id, kind, session_id) if session_id else None
@@ -365,9 +390,34 @@ async def _dispatch(
                         "x-gemini-lb-account": source.id,
                     },
                 )
-            result = await open_with_disconnect_watch(request, owner, google_json(source, path, body))
+            result: dict[str, JsonValue] = await open_with_disconnect_watch(
+                request, owner, google_json(source, path, body)
+            )
             if method == "retrieveUserQuota":
                 await save_quota(source.id, result)
+            if kind == "gemini_antigravity":
+                if method == "models":
+                    result = {
+                        "models": [
+                            {
+                                **{
+                                    key: value
+                                    for key, value in metadata.items()
+                                    if key
+                                    in {
+                                        "displayName",
+                                        "inputTokenLimit",
+                                        "outputTokenLimit",
+                                        "supportedGenerationMethods",
+                                    }
+                                },
+                                "name": "models/" + name,
+                            }
+                            for name, metadata in antigravity.catalog_models(result).items()
+                        ]
+                    }
+                else:
+                    result = _body_response(result)
             catalog = result.get("models")
             if method == "models" and isinstance(catalog, list):
                 source_models = {entry.model for entry in source.models if entry.is_enabled}
@@ -410,7 +460,8 @@ async def _dispatch(
 async def native_google(request: Request) -> Response:
     try:
         api_key = await authenticate_google(request)
-        native_path = request.url.path.removeprefix("/gemini").rstrip("/")
+        personal = request.url.path.startswith("/antigravity/")
+        native_path = request.url.path.removeprefix("/antigravity" if personal else "/gemini").rstrip("/")
         native = re.fullmatch(r"/(v1beta|v1)/models(?:/([a-zA-Z0-9._-]{1,128})(?::([a-zA-Z]+))?)?", native_path)
         assist = re.fullmatch(r"/v1internal:([a-zA-Z]+)", native_path)
         body: dict[str, JsonValue] | None = None
@@ -422,6 +473,11 @@ async def native_google(request: Request) -> Response:
             if not isinstance(value, dict):
                 raise GoogleError(400, "Expected a JSON object")
             body = value
+            controls = [body]
+            if isinstance((inner_control := body.get("request")), dict):
+                controls.append(inner_control)
+            if any(item.get(name) for item in controls for name in ("enabledCreditTypes", "enabled_credit_types")):
+                raise GoogleError(400, "Paid-credit opt-in is unsupported")
         if native:
             version, model, method = native.groups()
             model, method = model or "", method or "models"
@@ -429,11 +485,11 @@ async def native_google(request: Request) -> Response:
                 method != "models" and (request.method != "POST" or method not in _NATIVE_METHODS)
             ):
                 raise GoogleError(501, "Unsupported Gemini model method")
-            kind = "gemini_api_key"
+            kind = "gemini_antigravity" if personal else "gemini_api_key"
             if model and api_key.enforced_model:
                 model = api_key.enforced_model.removeprefix("models/")
             path = f"/{version}/models" + (f"/{model}" if model else "") + (f":{method}" if method != "models" else "")
-        elif assist and request.method == "POST" and body is not None:
+        elif not personal and assist and request.method == "POST" and body is not None:
             method, kind = assist[1], "gemini_code_assist"
             if method not in _ASSIST_METHODS:
                 raise GoogleError(501, "Unsupported Code Assist RPC; onboard with the official Gemini CLI first")
@@ -479,6 +535,28 @@ async def native_google(request: Request) -> Response:
             query = {
                 name: request.query_params[name] for name in ("pageSize", "pageToken") if name in request.query_params
             }
+        if personal:
+            if method not in {"models", "generateContent", "streamGenerateContent", "countTokens"}:
+                raise GoogleError(501, "Antigravity does not support this Gemini method")
+            if method == "models":
+                if query:
+                    raise GoogleError(400, "Antigravity catalog pagination is unsupported")
+                path, body = "/v1internal:fetchAvailableModels", {}
+            else:
+                path = f"/v1internal:{method}"
+                if method == "countTokens":
+                    counted = body.get("generateContentRequest", body) if body else {}
+                    if not isinstance(counted, dict):
+                        raise GoogleError(400, "Expected a generateContentRequest object")
+                    body = {"request": counted}
+                else:
+                    body = {
+                        "model": model,
+                        "request": body or {},
+                        "userAgent": "antigravity",
+                        "requestType": "agent",
+                        "requestId": f"agent-{uuid4()}",
+                    }
         if query:
             path += "?" + urlencode(query)
         return await _dispatch(request, api_key, kind=kind, model=model, method=method, path=path, body=body)
@@ -496,7 +574,7 @@ async def native_google(request: Request) -> Response:
         return error_response(GoogleError(error.status_code, error.message))
 
 
-for prefix in ("", "/gemini"):
+for prefix in ("", "/gemini", "/antigravity"):
     for version in ("v1beta", "v1"):
         for suffix in ("/models", "/models/{resource:path}"):
             path = f"{prefix}/{version}{suffix}"
@@ -505,6 +583,8 @@ for prefix in ("", "/gemini"):
             router.add_api_route(
                 path + "/", native_google, methods=["GET", "POST"], response_model=None, include_in_schema=False
             )
+    if prefix == "/antigravity":
+        continue
     router.add_api_route(f"{prefix}/v1internal:{{method}}", native_google, methods=["POST"], response_model=None)
     router.add_api_route(
         f"{prefix}/v1internal:{{method}}/",
@@ -514,7 +594,13 @@ for prefix in ("", "/gemini"):
         include_in_schema=False,
     )
 
-for path in ("/v1beta/{resource:path}", "/gemini/v1beta/{resource:path}", "/gemini/v1/{resource:path}"):
+for path in (
+    "/v1beta/{resource:path}",
+    "/gemini/v1beta/{resource:path}",
+    "/gemini/v1/{resource:path}",
+    "/antigravity/v1beta/{resource:path}",
+    "/antigravity/v1/{resource:path}",
+):
     router.add_api_route(
         path,
         native_google,

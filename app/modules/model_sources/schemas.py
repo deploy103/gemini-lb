@@ -34,7 +34,9 @@ class ModelSourceModelResponse(ModelSourceModelInput):
 
 class ModelSourceCreateRequest(DashboardModel):
     name: str = Field(min_length=1, max_length=128)
-    kind: Literal["openai_compatible", "gemini_api_key", "gemini_code_assist"] = "openai_compatible"
+    kind: Literal["openai_compatible", "gemini_api_key", "gemini_code_assist", "gemini_antigravity"] = (
+        "openai_compatible"
+    )
     base_url: str = Field(min_length=1, max_length=2048)
     api_key: str | None = Field(default=None, min_length=1)
     supports_chat_completions: bool = True
@@ -82,10 +84,15 @@ class ModelSourcesResponse(DashboardModel):
     sources: list[ModelSourceResponse] = Field(default_factory=list)
 
 
+class GoogleConnectionStartRequest(DashboardModel):
+    kind: Literal["gemini_code_assist", "gemini_antigravity"] = "gemini_code_assist"
+
+
 class GoogleConnectionStartResponse(DashboardModel):
     authorization_url: str
     transaction: str
     expires_in: int
+    kind: Literal["gemini_code_assist", "gemini_antigravity"] = "gemini_code_assist"
 
 
 class GoogleConnectionCompleteRequest(DashboardModel):
@@ -93,11 +100,12 @@ class GoogleConnectionCompleteRequest(DashboardModel):
     code: str = Field(min_length=1, max_length=2048, repr=False)
     name: str | None = Field(default=None, min_length=1, max_length=128)
     project: str | None = Field(default=None, min_length=1, max_length=256)
+    allow_free_setup: bool = False
     models: list[ModelSourceModelInput] = Field(default_factory=list, max_length=100)
 
 
 class GoogleDiscoveryResponse(DashboardModel):
-    origin: Literal["catalog", "quota"]
+    origin: Literal["catalog", "quota", "antigravity"]
     models: list[ModelSourceModelInput]
     checked_at: datetime
     elapsed_ms: int

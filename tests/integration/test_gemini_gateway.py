@@ -766,3 +766,240 @@ async def test_google_dashboard_discovery_uses_existing_project_and_observed_quo
             MODEL
         ]
         assert quota["buckets"][0]["remainingFraction"] == 0.25 and quota["updatedAt"]
+
+
+@pytest.mark.parametrize("mode", ["json", "stream", "incomplete", "count"])
+async def test_antigravity_native_envelope_usage_and_stream_terminal(async_client, google_upstream, mode):
+    observed = []
+    contents = [*BODY["contents"]]
+    if mode == "json":
+        # Tool data mentioning a credit field is not a provider opt-in.
+        contents.append(
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "read_config",
+                            "response": {"enabledCreditTypes": ["GOOGLE_ONE_AI"]},
+                        }
+                    }
+                ],
+            }
+        )
+
+    async def handler(request):
+        body = await request.json()
+        observed.append(body)
+        assert request.headers["authorization"] == "Bearer personal-access"
+        assert "x-goog-api-key" not in request.headers and "X-Arbitrary" not in request.headers
+        assert "antigravity/" in request.headers["user-agent"]
+        if mode == "count":
+            assert request.path == "/v1internal:countTokens"
+            assert body == {"request": {**BODY, "model": f"models/{MODEL}"}}
+            return web.json_response({"totalTokens": 31})
+        assert body["project"] == "managed-personal-project" and body["model"] == MODEL
+        assert body["requestType"] == "agent" and body["requestId"].startswith("agent-")
+        inner = body["request"]
+        assert inner["contents"] == contents and inner["sessionId"].isdigit()
+        assert "session_id" not in inner
+        assert inner["generationConfig"] == {"maxOutputTokens": 101}
+        if mode == "json":
+            return web.json_response({"response": RESULT, "traceId": "internal-only"})
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        first = {
+            "candidates": [{"index": 0, "content": {"parts": [{"text": "안녕"}]}}],
+            "usageMetadata": RESULT["usageMetadata"],
+        }
+        frames = [first, first] if mode == "incomplete" else [first, first, RESULT]
+        for frame in frames:
+            encoded = ("data: " + json.dumps({"response": frame}, ensure_ascii=False) + "\r\n\r\n").encode()
+            for start in range(0, len(encoded), 9):
+                await response.write(encoded[start : start + 9])
+        await response.write_eof()
+        return response
+
+    base = await google_upstream(handler)
+    # An earlier API-key source must never receive personal-account traffic.
+    await _source(async_client, base, "api-key")
+    source_id = await _source(
+        async_client,
+        base,
+        "personal",
+        kind="gemini_antigravity",
+        credential=json.dumps(
+            {
+                "access_token": "personal-access",
+                "project": "managed-personal-project",
+                "expiry_date": time.time() * 1000 + 3600000,
+            }
+        ),
+    )
+    key = await _key(async_client)
+    method = "countTokens" if mode == "count" else "generateContent" if mode == "json" else "streamGenerateContent"
+    body = (
+        {"generateContentRequest": {**BODY, "model": f"models/{MODEL}"}}
+        if mode == "count"
+        else {
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": 101},
+        }
+    )
+    response = await async_client.post(
+        f"/antigravity/v1beta/models/{MODEL}:{method}/" + ("?alt=sse" if mode in {"stream", "incomplete"} else ""),
+        headers={"x-goog-api-key": key["key"], "X-Arbitrary": "private"},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    assert len(observed) == 1 and response.headers["x-gemini-lb-account"] == source_id
+    if mode in {"stream", "incomplete"}:
+        frames = [json.loads(frame.removeprefix("data: ")) for frame in response.text.strip().split("\n\n")]
+        assert "response" not in frames[0] and frames[0]["candidates"][0]["content"]["parts"][0]["text"] == "안녕"
+        if mode == "incomplete":
+            assert frames[-1]["error"]["code"] == 502
+        else:
+            assert frames[-1] == RESULT
+    else:
+        assert response.json() == ({"totalTokens": 31} if mode == "count" else RESULT)
+    async with SessionLocal() as session:
+        row = await session.scalar(select(RequestLog).where(RequestLog.model_source_id == source_id))
+        reservation = await session.scalar(
+            select(ApiKeyUsageReservation).where(ApiKeyUsageReservation.api_key_id == key["id"])
+        )
+    assert row is not None and reservation is not None and reservation.status == "finalized"
+    expected = (0, 0, 0, None) if mode == "count" else (31, 12, 11, 5)
+    assert (row.input_tokens, row.output_tokens, row.cached_input_tokens, row.reasoning_tokens) == expected
+    assert (reservation.input_tokens, reservation.output_tokens) == expected[:2]
+    assert row.status == ("error" if mode == "incomplete" else "success")
+
+
+async def test_antigravity_observed_catalog_quota_and_provider_assignment(async_client, google_upstream):
+    calls = []
+    catalog = {
+        "models": {
+            MODEL: {
+                "displayName": "Observed Gemini",
+                "inputTokenLimit": 12345,
+                "outputTokenLimit": 678,
+                "quotaInfo": {"remainingFraction": 0.375, "resetTime": "2099-01-01T00:00:00Z"},
+            },
+            "unconfigured-model": {"quotaInfo": {"remainingFraction": 0.9}},
+        }
+    }
+
+    async def handler(request):
+        calls.append(request.path)
+        assert request.method == "POST" and request.path == "/v1internal:fetchAvailableModels"
+        assert await request.json() == {"project": "personal-project"}
+        return web.json_response(catalog)
+
+    source_id = await _source(
+        async_client,
+        await google_upstream(handler),
+        kind="gemini_antigravity",
+        credential=json.dumps(
+            {
+                "project": "personal-project",
+                "access_token": "personal-token",
+                "expiry_date": time.time() * 1000 + 3600000,
+            }
+        ),
+    )
+    key = await _key(async_client)
+    for version in ("v1", "v1beta"):
+        response = await async_client.get(f"/antigravity/{version}/models/", headers={"x-goog-api-key": key["key"]})
+        assert response.status_code == 200, response.text
+        assert response.json()["models"] == [
+            {
+                "name": f"models/{MODEL}",
+                "displayName": "Observed Gemini",
+                "inputTokenLimit": 12345,
+                "outputTokenLimit": 678,
+            }
+        ]
+    discovered = await async_client.post(f"/api/model-sources/{source_id}/discover")
+    assert discovered.status_code == 200 and discovered.json()["origin"] == "antigravity"
+    model = next(item for item in discovered.json()["models"] if item["model"] == MODEL)
+    assert model["contextWindow"] == 12345 and model["maxOutputTokens"] == 678
+    saved = (await async_client.get("/api/model-sources/")).json()["sources"][0]["models"]
+    assert len(saved) == 1 and saved[0]["inputPer1M"] == 2
+    quota = await async_client.post(f"/api/model-sources/{source_id}/quota")
+    assert quota.status_code == 200 and quota.json()["buckets"][0]["remainingFraction"] == 0.375
+    unrelated = await _source(async_client, "http://127.0.0.1:9", "unrelated-api-key")
+    restricted = await _key(async_client, assignedSourceIds=[unrelated])
+    denied = await async_client.post(
+        f"/antigravity/v1/models/{MODEL}:generateContent", headers={"x-goog-api-key": restricted["key"]}, json=BODY
+    )
+    assert denied.status_code == 503 and len(calls) == 4
+
+
+async def test_antigravity_appended_history_retains_owner_and_key_isolation(async_client, google_upstream):
+    async def handler(request):
+        return web.json_response({"response": RESULT})
+
+    base = await google_upstream(handler)
+    ids = []
+    for name in ("first", "second"):
+        ids.append(
+            await _source(
+                async_client,
+                base,
+                name,
+                kind="gemini_antigravity",
+                credential=json.dumps(
+                    {
+                        "project": f"project-{name}",
+                        "access_token": name,
+                        "expiry_date": time.time() * 1000 + 3600000,
+                    }
+                ),
+            )
+        )
+    key = await _key(async_client)
+    path = f"/antigravity/v1/models/{MODEL}:generateContent"
+    first = await async_client.post(
+        path, headers={"x-goog-api-key": key["key"], "x-gemini-lb-account": ids[0]}, json=BODY
+    )
+    assert first.status_code == 200
+    history = {
+        "contents": [
+            *BODY["contents"],
+            {"role": "model", "parts": [{"thoughtSignature": "owned-signature", "text": "answer"}]},
+            {"role": "user", "parts": [{"text": "continue"}]},
+        ]
+    }
+    continued = await async_client.post(path, headers={"x-goog-api-key": key["key"]}, json=history)
+    assert continued.status_code == 200 and continued.headers["x-gemini-lb-account"] == ids[0]
+    conflict = await async_client.post(
+        path, headers={"x-goog-api-key": key["key"], "x-gemini-lb-account": ids[1]}, json=history
+    )
+    assert conflict.status_code == 409
+    other_key = await _key(async_client, assignedSourceIds=[ids[1]])
+    unrelated = await async_client.post(path, headers={"x-goog-api-key": other_key["key"]}, json=history)
+    assert unrelated.status_code == 409  # Cannot reuse the first key's established ownership.
+    independent = await async_client.post(path, headers={"x-goog-api-key": other_key["key"]}, json=BODY)
+    assert independent.status_code == 200 and independent.headers["x-gemini-lb-account"] == ids[1]
+    await async_client.patch(f"/api/model-sources/{ids[0]}", json={"isEnabled": False})
+    disabled = await async_client.post(path, headers={"x-goog-api-key": key["key"]}, json=history)
+    assert disabled.status_code == 503
+
+
+@pytest.mark.parametrize("field", ["enabledCreditTypes", "enabled_credit_types"])
+async def test_antigravity_refuses_credit_opt_in_and_unsupported_methods(async_client, field):
+    key = await _key(async_client)
+    headers = {"x-goog-api-key": key["key"]}
+    response = await async_client.post(
+        f"/antigravity/v1/models/{MODEL}:generateContent",
+        headers=headers,
+        json={**BODY, field: ["GOOGLE_ONE_AI"]},
+    )
+    assert response.status_code == 400 and "Paid-credit" in response.text
+    unsupported = await async_client.post(f"/antigravity/v1/models/{MODEL}:embedContent", headers=headers, json=BODY)
+    assert unsupported.status_code == 501
+    missing_sse = await async_client.post(
+        f"/antigravity/v1/models/{MODEL}:streamGenerateContent", headers=headers, json=BODY
+    )
+    assert missing_sse.status_code == 400
+    unknown = await async_client.get("/antigravity/v1/files", headers=headers)
+    assert unknown.status_code == 501 and "text/html" not in unknown.headers["content-type"]
