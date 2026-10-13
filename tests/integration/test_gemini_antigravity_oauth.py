@@ -201,6 +201,8 @@ async def test_antigravity_account_metadata_and_explicit_free_setup(
         assert (await async_client.get("/api/model-sources/")).json()["sources"] == []
         if onboard_count:
             assert "attempted" in response.text and "No project or billing settings were changed" not in response.text
+        if case in {"failed", "non-free-advertised"}:
+            assert f"HTTP {400 if case == 'failed' else 403}" in response.text
         return
     assert response.status_code == 200, response.text
     assert response.json()["kind"] == "gemini_antigravity"

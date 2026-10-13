@@ -12,6 +12,6 @@ Native CLI histories without custom session headers derive a stable first-user-c
 
 
 
-Live account gate: using the owner's existing Windows browser session, the primary personal login reached Google's account chooser and then the warning “Google을 통해 다운로드한 앱인지 확인하세요” (confirm the app was downloaded through Google). It names Google Antigravity because the configured profile is its installed-client identity from the public reference, not a separately registered gateway application. The agent did not confirm that warning or continue consent. The owner must review this unsupported third-party login path or complete login in the official client before proceeding. No real Google credential was saved to a source and no live generation was performed. The change remains active until free and AI Pro account inference and persisted usage are verified.
+
 
 
