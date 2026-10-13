@@ -1,11 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Connect Antigravity personal accounts separately
-The gateway SHALL support a distinct encrypted Antigravity OAuth source for free and subscribed personal Google accounts. It SHALL use a separately configured OAuth client, browser/session-bound encrypted ten-minute transactions, PKCE and validated loopback callback state. Existing Gemini CLI OAuth credentials SHALL NOT be reused as Antigravity identity. Actual model availability SHALL come from Google rather than an inferred subscription label. Initialization SHALL require explicit consent and a Google-offered free tier, with bounded requests and no paid-tier onboarding, billing activation or paid-credit opt-in.
+The gateway SHALL support a distinct encrypted Antigravity OAuth source for free and subscribed personal Google accounts. It SHALL use a separately configured OAuth client, browser/session-bound encrypted ten-minute transactions, PKCE and validated loopback callback state. Existing Gemini CLI OAuth credentials SHALL NOT be reused as Antigravity identity. Actual model availability SHALL come from Google rather than an inferred subscription label. Initialization SHALL require explicit consent and request only the literal free-tier, with bounded requests and no paid-tier onboarding, billing activation or paid-credit opt-in. Missing tier advertisements SHALL NOT prevent this free-only attempt; Google SHALL remain authoritative about accepting it. Explicit validation, privacy and terms gates SHALL prevent the attempt.
 
 #### Scenario: Personal account needs free initialization
 - **WHEN** Google offers free initialization and the operator explicitly permits it
 - **THEN** the gateway resolves the Google-managed project using bounded operations without sending a caller project or paid-credit opt-in
+
+#### Scenario: Project and free-tier advertisement are absent
+- **WHEN** project discovery returns neither a project nor an explicit validation gate and the operator permits free initialization
+- **THEN** the gateway attempts only free-tier even if a catalog is absent or another tier is advertised, and refuses registration if Google rejects that attempt
 
 #### Scenario: Callback is from another authorization attempt
 - **WHEN** callback state does not match the encrypted transaction
@@ -36,14 +40,14 @@ The primary Accounts route SHALL manage Gemini API-key, enterprise Code Assist a
 - **THEN** personal Antigravity login, enterprise Code Assist, Gemini API-key registration and provider-specific OAuth import are available without a ChatGPT login option
 
 ### Requirement: Connect Google accounts through bounded authorization transactions
-Google login SHALL use authorization code with S256 PKCE, offline access and provider-specific redirect/scopes. Authorization transactions SHALL be encrypted, expire after ten minutes, be bound to the initiating dashboard session and require dashboard write authorization. Codes, tokens and client secrets SHALL NOT appear in response bodies or errors. Completion SHALL verify Google identity, resolve a project and save credentials using the existing encrypted source contract. Code Assist SHALL resolve only already onboarded projects. Antigravity SHALL permit only explicitly consented, Google-offered free initialization. Neither provider SHALL enable billing, paid-tier onboarding or paid-credit opt-in. API-key registration and explicit OAuth import SHALL remain available independently.
+Google login SHALL use authorization code with S256 PKCE, offline access and provider-specific redirect/scopes. Authorization transactions SHALL be encrypted, expire after ten minutes, be bound to the initiating dashboard session and require dashboard write authorization. Codes, tokens and client secrets SHALL NOT appear in response bodies or errors. Completion SHALL verify Google identity, resolve a project and save credentials using the existing encrypted source contract. Code Assist SHALL resolve only already onboarded projects. Antigravity SHALL permit only explicitly consented free-tier initialization attempts, with Google determining acceptance. Neither provider SHALL enable billing, paid-tier onboarding or paid-credit opt-in. API-key registration and explicit OAuth import SHALL remain available independently.
 
 #### Scenario: A different session submits a connection transaction
 - **WHEN** completion is attempted from a different dashboard session
 - **THEN** the application refuses it before exchanging the authorization code
 
 #### Scenario: Google account requires onboarding
-- **WHEN** Google returns no usable project and consented offered free initialization does not apply or cannot resolve a project
+- **WHEN** Google returns no usable project and consented free-tier initialization does not apply or cannot resolve a project
 - **THEN** no source is registered and the operator receives actionable official-client setup instructions without an unsupported claim that no allocation was attempted
 
 ### Requirement: Diagnose Google sources without generation
