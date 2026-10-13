@@ -54,6 +54,7 @@ import { REQUEST_STATUS_LABELS } from "@/utils/constants";
 import { getErrorMessageOrNull } from "@/utils/errors";
 import { formatModelLabel, formatCurrency, formatSlug } from "@/utils/formatters";
 import { usePrivacyStore } from "@/hooks/use-privacy";
+import { ModelSourcesSettings } from "@/features/model-sources/components/model-sources-settings";
 
 const MODEL_OPTION_DELIMITER = ":::";
 
@@ -62,7 +63,7 @@ type RetainedDashboardLoadError = {
   message: string;
 };
 
-export function DashboardPage() {
+export function DashboardPage({ gemini = false }: { gemini?: boolean }) {
   const { t, i18n } = useTranslation();
   const {
     visibleColumns,
@@ -85,6 +86,7 @@ export function DashboardPage() {
   // coarse `write` alias: conversations and archives need `conversations:read`,
   // account actions `accounts:write`, the API-key filter `api_keys:read`.
   const canWriteAccounts = usePermission("accounts:write");
+  const canWriteSources = useAuthStore((state) => state.canWrite);
   const canReadApiKeys = usePermission("api_keys:read");
   const initialized = useAuthStore((state) => state.initialized);
   const hasConversationsRead = usePermission("conversations:read");
@@ -119,7 +121,7 @@ export function DashboardPage() {
     useState<RetainedDashboardLoadError | null>(null);
   const [overviewRetryTimeframe, setOverviewRetryTimeframe] =
     useState<OverviewTimeframe | null>(null);
-  const projectionsQuery = useDashboardProjections(Boolean(dashboardQuery.data));
+  const projectionsQuery = useDashboardProjections(!gemini && Boolean(dashboardQuery.data));
   const conversationsState = useConversations({
     enabled: canReadConversations && dashboardView === "conversations",
   });
@@ -183,7 +185,7 @@ export function DashboardPage() {
     (account: AccountSummary, action: string) => {
       switch (action) {
         case "details":
-          navigate(`/accounts?selected=${account.accountId}`);
+          navigate(`/legacy/accounts?selected=${account.accountId}`);
           break;
         case "resume":
           if (canWriteAccounts) {
@@ -191,7 +193,7 @@ export function DashboardPage() {
           }
           break;
         case "reauth":
-          navigate(`/accounts?selected=${account.accountId}`);
+          navigate(`/legacy/accounts?selected=${account.accountId}`);
           break;
         case "warmup-toggle":
           if (canWriteAccounts) {
@@ -236,11 +238,11 @@ export function DashboardPage() {
       logPage?.requests ?? [],
       {
         isDark,
-        showAccountBurnrate,
+        showAccountBurnrate: !gemini && showAccountBurnrate,
       },
       projectionsQuery.data,
     );
-  }, [overview, logPage, isDark, showAccountBurnrate, projectionsQuery.data, resolvedLanguage]);
+  }, [overview, logPage, isDark, gemini, showAccountBurnrate, projectionsQuery.data, resolvedLanguage]);
 
   const accountOptions = useMemo(() => {
     const entries = new Map<string, { label: string; isEmail: boolean }>();
@@ -471,6 +473,7 @@ export function DashboardPage() {
         <>
           <StatsGrid stats={view.stats} />
 
+          {gemini ? <ModelSourcesSettings geminiOnly disabled={!canWriteSources} /> : <>
           {view.weeklyCreditPace ? (
             <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
               <UsageDonuts
@@ -520,6 +523,7 @@ export function DashboardPage() {
             )}
           </section>
 
+          </>}
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
               <DashboardViewSelector

@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Eye, EyeOff, LogIn, LogOut, Menu, ShieldAlert } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, LogIn, LogOut, Menu, ShieldAlert, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
-import { CodexLogo } from "@/components/brand/codex-logo";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { LanguageToggle, LanguageToggleMobile } from "@/components/layout/language-toggle";
 import { ADVANCED_NAV_ITEMS, CORE_NAV_ITEMS } from "@/components/layout/nav-items";
@@ -39,6 +38,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const { t } = useTranslation();
   const { pathname } = useLocation();
+  const legacy = pathname.startsWith("/legacy/");
   const [mobileOpen, setMobileOpen] = useState(false);
   const permissions = useAuthStore((state) => state.permissions);
   const tier = useAuthStore((state) => state.tier);
@@ -63,6 +63,7 @@ export function AppHeader({
     queryKey: ["accounts", "list"],
     queryFn: listAccounts,
     select: (data) => data.accounts,
+    enabled: legacy,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
     staleTime: 30_000,
@@ -70,8 +71,9 @@ export function AppHeader({
   const { data: settings } = useQuery({
     queryKey: ["settings", "detail"],
     queryFn: getSettings,
+    enabled: legacy,
   });
-  const showResetCreditBadges = settings?.showResetCreditBadges ?? true;
+  const showResetCreditBadges = legacy && (settings?.showResetCreditBadges ?? true);
   const totalAvailableResetCredits = accounts.reduce(
     (total, account) => total + Math.max(0, account.availableResetCredits ?? 0),
     0,
@@ -99,7 +101,7 @@ export function AppHeader({
           className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg no-underline transition-colors hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/5">
-            <CodexLogo size={20} className="text-primary" />
+            <Sparkles size={20} className="text-primary" />
           </div>
           <div className="min-w-0">
             <p className="truncate font-mono text-sm font-semibold tracking-tight">gemini-lb</p>
@@ -111,7 +113,7 @@ export function AppHeader({
           {coreNavItems.map((item) => (
             <NavLink
               key={item.to}
-              to={item.to}
+              to={legacy && (item.to === "/accounts" || item.to === "/dashboard") ? `/legacy${item.to}` : item.to}
               className={({ isActive }) =>
                 cn(
                   "relative inline-flex h-7 items-center rounded-md px-3.5 text-xs leading-none font-medium transition-colors duration-200",
@@ -216,7 +218,7 @@ export function AppHeader({
               <SheetHeader>
                 <SheetTitle className="flex items-center gap-2.5">
                   <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-                    <CodexLogo size={16} className="text-primary" />
+                    <Sparkles size={16} className="text-primary" />
                   </div>
                   <span className="font-mono text-sm font-semibold">gemini-lb</span>
                 </SheetTitle>
@@ -232,7 +234,7 @@ export function AppHeader({
                   </span>
                 ) : null}
                 {coreNavItems.map((item) => (
-                  <NavLink key={item.to} to={item.to} onClick={() => setMobileOpen(false)}>
+                  <NavLink key={item.to} to={legacy && (item.to === "/accounts" || item.to === "/dashboard") ? `/legacy${item.to}` : item.to} onClick={() => setMobileOpen(false)}>
                     {({ isActive }) => (
                       <span
                         className={cn(

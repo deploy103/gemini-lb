@@ -4,15 +4,13 @@ import { HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 
 import App from "@/App";
-import {
-  createAccountSummary,
-  createDashboardOverview,
-} from "@/test/mocks/factories";
+import { createDashboardOverview } from "@/test/mocks/factories";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/utils";
 
 const OUTAGE = "forced overview outage";
-const RECOVERED = "Recovered Overview Account";
+const RECOVERED = createDashboardOverview({ accounts: [] });
+RECOVERED.summary.metrics!.requests = 731;
 
 afterEach(() => {
   window.history.pushState({}, "", "/");
@@ -43,18 +41,7 @@ describe("dashboard overview error integration", () => {
         }
         signalRetry();
         await recoveryGate;
-        return HttpResponse.json(
-          createDashboardOverview({
-            accounts: [
-              createAccountSummary({
-                accountId: "acc_recovered_overview",
-                chatgptAccountId: "chatgpt_acc_recovered_overview",
-                displayName: RECOVERED,
-                email: "recovered-overview@example.com",
-              }),
-            ],
-          }),
-        );
+        return HttpResponse.json(RECOVERED);
       }),
     );
 
@@ -82,7 +69,7 @@ describe("dashboard overview error integration", () => {
     expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0);
 
     releaseRecovery();
-    expect(await screen.findByText(RECOVERED)).toBeInTheDocument();
+    expect(await screen.findByText("731", { exact: true })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(overviewCalls).toBeGreaterThan(2);
   });
@@ -115,20 +102,13 @@ describe("dashboard overview error integration", () => {
           await nextTimeframeRequestGate;
           return HttpResponse.json(
             createDashboardOverview({
+              ...RECOVERED,
               timeframe: {
                 key: "30d",
                 windowMinutes: 43_200,
                 bucketSeconds: 86_400,
                 bucketCount: 30,
               },
-              accounts: [
-                createAccountSummary({
-                  accountId: "acc_thirty_day",
-                  chatgptAccountId: "chatgpt_acc_thirty_day",
-                  displayName: "Thirty Day Overview Account",
-                  email: "thirty-day@example.com",
-                }),
-              ],
             }),
           );
         }
@@ -180,7 +160,8 @@ describe("dashboard overview error integration", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
 
     releaseNextTimeframeRequest();
-    expect((await screen.findAllByText("Thirty Day Overview Account")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("731", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Requests (30d)")).toBeInTheDocument();
   });
 
   it("retains terminal no-data error during an invalidation refetch", async () => {
@@ -205,18 +186,7 @@ describe("dashboard overview error integration", () => {
         }
         signalRefresh();
         await refreshGate;
-        return HttpResponse.json(
-          createDashboardOverview({
-            accounts: [
-              createAccountSummary({
-                accountId: "acc_refreshed",
-                chatgptAccountId: "chatgpt_acc_refreshed",
-                displayName: RECOVERED,
-                email: "refreshed@example.com",
-              }),
-            ],
-          }),
-        );
+        return HttpResponse.json(RECOVERED);
       }),
     );
 
@@ -237,6 +207,6 @@ describe("dashboard overview error integration", () => {
     expect(retry).toHaveAttribute("aria-busy", "true");
 
     releaseRefresh();
-    expect((await screen.findAllByText(RECOVERED)).length).toBeGreaterThan(0);
+    expect(await screen.findByText("731", { exact: true })).toBeInTheDocument();
   });
 });

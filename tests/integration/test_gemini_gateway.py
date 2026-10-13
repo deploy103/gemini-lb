@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import time
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from aiohttp import web
@@ -505,3 +507,112 @@ async def test_google_reauthentication_requires_reimport(async_client, google_up
         await async_client.patch(f"/api/model-sources/{source_id}", json={"apiKey": "replacement-key"})
     ).status_code == 200
     assert (await async_client.post(path, **arguments)).status_code == 200 and len(observed) == 2
+
+
+@pytest.mark.parametrize("setup_required", [False, True])
+async def test_google_browser_connection_registers_native_encrypted_account(
+    async_client, google_upstream, monkeypatch, setup_required
+):
+    from app.modules.gemini import oauth
+
+    authorization = {}
+
+    async def handler(request):
+        if request.path == "/token":
+            form = await request.post()
+            challenge = (
+                base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"].encode()).digest()).decode().rstrip("=")
+            )
+            assert challenge == authorization["code_challenge"][0]
+            assert form["redirect_uri"] == "https://codeassist.google.com/authcode"
+            assert form["grant_type"] == "authorization_code" and form["code"] == "google-code"
+            return web.json_response(
+                {"access_token": "google-access", "refresh_token": "google-refresh", "expires_in": 3600}
+            )
+        assert request.headers["Authorization"] == "Bearer google-access"
+        if request.path == "/userinfo":
+            return web.json_response({"id": "123456789", "email": "google-user@example.com"})
+        assert request.path == "/setup", "Account connection must not call onboarding or billing APIs"
+        assert await request.json() == {
+            "metadata": {"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}
+        }
+        return web.json_response(
+            {"allowedTiers": [{"id": "free-tier", "isDefault": True}]}
+            if setup_required
+            else {"currentTier": {"id": "free-tier"}, "cloudaicompanionProject": "managed-project"}
+        )
+
+    base = (await google_upstream(handler)).removesuffix("/v1")
+    for endpoint, path in [("TOKEN_ENDPOINT", "token"), ("USERINFO_ENDPOINT", "userinfo"), ("SETUP_ENDPOINT", "setup")]:
+        monkeypatch.setattr(oauth, endpoint, f"{base}/{path}")
+    start = await async_client.post("/api/model-sources/google/start")
+    assert start.status_code == 200, start.text
+    assert start.headers["cache-control"] == "no-store" and "HttpOnly" in start.headers["set-cookie"]
+    assert urlparse(start.json()["authorizationUrl"]).hostname == "accounts.google.com"
+    authorization.update(parse_qs(urlparse(start.json()["authorizationUrl"]).query))
+    assert authorization["code_challenge_method"] == ["S256"] and authorization["access_type"] == ["offline"]
+    result = await async_client.post(
+        "/api/model-sources/google/complete",
+        json={"transaction": start.json()["transaction"], "code": "google-code", "models": [{"model": MODEL}]},
+    )
+    assert (
+        "google-access" not in result.text and "google-refresh" not in result.text and "google-code" not in result.text
+    )
+    sources = (await async_client.get("/api/model-sources/")).json()["sources"]
+    if setup_required:
+        assert result.status_code == 400 and result.json()["error"]["code"] == "google_setup_required"
+        assert sources == []
+    else:
+        assert result.status_code == 200, result.text
+        assert result.json()["name"] == "google-user@example.com"
+        assert result.json()["kind"] == "gemini_code_assist" and not result.json()["supportsChatCompletions"]
+        async with SessionLocal() as session:
+            source = await session.get(ModelSource, result.json()["id"])
+            assert source is not None and source.api_key_encrypted is not None
+            credential = json.loads(TokenEncryptor().decrypt(source.api_key_encrypted))
+        assert credential["access_token"] == "google-access" and credential["refresh_token"] == "google-refresh"
+        assert credential["project"] == "managed-project" and credential["quota_scope"] == "google-user:123456789"
+        assert len(sources) == 1
+        replay = await async_client.post(
+            "/api/model-sources/google/complete",
+            json={"transaction": start.json()["transaction"], "code": "google-code", "models": [{"model": MODEL}]},
+        )
+        assert replay.status_code == 400 and replay.json()["error"]["code"] == "invalid_google_transaction"
+
+
+@pytest.mark.parametrize("invalid", ["other-session", "expired", "tampered", "rejected-code"])
+async def test_google_connection_refuses_invalid_transactions_without_secret_disclosure(
+    async_client, google_upstream, monkeypatch, invalid
+):
+    from cryptography.fernet import Fernet
+
+    from app.core.crypto import get_or_create_key
+    from app.modules.gemini import oauth
+
+    reached_google = []
+
+    async def handler(request):
+        reached_google.append(request.path)
+        return web.json_response({"error": "invalid_grant", "error_description": "private-google-code"}, status=400)
+
+    monkeypatch.setattr(oauth, "TOKEN_ENDPOINT", (await google_upstream(handler)).removesuffix("/v1") + "/token")
+    start = await async_client.post("/api/model-sources/google/start")
+    ticket = start.json()["transaction"]
+    if invalid == "other-session":
+        async_client.cookies.clear()
+    elif invalid == "expired":
+        cipher = Fernet(get_or_create_key())
+        ticket = cipher.encrypt_at_time(cipher.decrypt(ticket.encode()), int(time.time()) - 601).decode()
+    elif invalid == "tampered":
+        ticket = ticket[:-8] + "invalid!"
+    result = await async_client.post(
+        "/api/model-sources/google/complete",
+        json={"transaction": ticket, "code": "private-google-code", "models": [{"model": MODEL}]},
+    )
+    assert result.status_code == 400
+    assert result.json()["error"]["code"] == (
+        "google_connection_failed" if invalid == "rejected-code" else "invalid_google_transaction"
+    )
+    assert reached_google == (["/token"] if invalid == "rejected-code" else [])
+    assert "private-google-code" not in result.text and ticket not in result.text
+    assert (await async_client.get("/api/model-sources/")).json()["sources"] == []

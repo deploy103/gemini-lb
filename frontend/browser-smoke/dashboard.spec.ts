@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { AuthSessionSchema } from "../src/features/auth/schemas";
-import { DashboardProjectionsSchema } from "../src/features/dashboard/schemas";
+import { ModelSourcesResponseSchema } from "../src/features/model-sources/schemas";
 import {
   createAccountSummary,
   createDashboardAuthSession,
@@ -17,7 +17,7 @@ import {
 const REQUIRED_API_PATHS = [
   "/api/dashboard-auth/session",
   "/api/dashboard/overview",
-  "/api/dashboard/projections",
+  "/api/model-sources/",
   "/api/request-logs/options",
   "/api/request-logs",
   "/api/settings/telemetry",
@@ -167,13 +167,13 @@ test("the built dashboard accepts real backend responses", async ({ page }) => {
   }
   const sessionResponse = requiredResponses[0];
   AuthSessionSchema.parse(await sessionResponse.json());
-  const projectionsResponse = requiredResponses.find(
-    (response) => new URL(response.url()).pathname === "/api/dashboard/projections",
+  const sourcesResponse = requiredResponses.find(
+    (response) => new URL(response.url()).pathname === "/api/model-sources/",
   );
-  if (!projectionsResponse) {
-    throw new Error("Dashboard projections response was not captured");
+  if (!sourcesResponse) {
+    throw new Error("Gemini sources response was not captured");
   }
-  DashboardProjectionsSchema.parse(await projectionsResponse.json());
+  ModelSourcesResponseSchema.parse(await sourcesResponse.json());
 
   // First run against an empty database resolves telemetry consent as
   // undecided/default, so the informed-consent dialog must appear before
@@ -186,7 +186,7 @@ test("the built dashboard accepts real backend responses", async ({ page }) => {
   await acceptTelemetryConsent(page, consentDialog);
 
   await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
-  await expect(page.getByText("No accounts connected yet", { exact: true })).toBeVisible();
+  await expect(page.getByText("No Gemini accounts connected. Add a Google account or API key to start routing requests.", { exact: true })).toBeVisible();
   await expect(page.getByText("No requests yet", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
 
@@ -194,6 +194,95 @@ test("the built dashboard accepts real backend responses", async ({ page }) => {
   expect(apiFailures).toEqual([]);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test("primary accounts connects through Google and manages native Gemini credentials", async ({ page, request }, testInfo) => {
+  const oauthRequests: string[] = [];
+  page.on("request", (req) => {
+    if (new URL(req.url()).pathname.startsWith("/api/oauth/")) oauthRequests.push(req.url());
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/accounts");
+  await acceptTelemetryConsentIfShown(page);
+  await expect(page.getByRole("heading", { name: "Gemini accounts", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Add account", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add account" });
+  await expect(dialog.getByRole("radio", { name: "Google login" })).toBeChecked();
+  await dialog.getByRole("button", { name: "Start Google login" }).click();
+  const googleLink = dialog.getByRole("link", { name: "Open Google sign-in" });
+  await expect(googleLink).toBeVisible();
+  const authorization = new URL((await googleLink.getAttribute("href"))!);
+  expect(authorization.origin).toBe("https://accounts.google.com");
+  expect(authorization.searchParams.get("redirect_uri")).toBe("https://codeassist.google.com/authcode");
+  expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
+  await expect(dialog.getByLabel("Google authorization code")).toHaveAttribute("type", "password");
+  await expect(dialog.getByText(/ChatGPT|OpenAI/)).toHaveCount(0);
+
+  for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 568 }]) {
+    await resizeViewportAndSettle(page, size);
+    await expect(dialog).toBeInViewport({ ratio: 1 });
+    await expect(dialog.getByRole("button", { name: "Connect account" })).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+    await page.screenshot({ path: testInfo.outputPath(`gemini-google-${size.width}.png`) });
+    if (size.width < 500) {
+      const scroll = dialog.locator("form > div").first();
+      await scroll.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect(dialog.getByLabel("Google authorization code")).toBeInViewport({ ratio: 1 });
+      await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeInViewport({ ratio: 1 });
+      await page.screenshot({ path: testInfo.outputPath(`gemini-google-scrolled-${size.width}.png`) });
+      await scroll.evaluate((element) => { element.scrollTop = 0; });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await dialog.getByRole("radio", { name: "Import OAuth JSON" }).check();
+  await expect(dialog.getByLabel("OAuth JSON", { exact: true })).toHaveAttribute("type", "password");
+  await expect(dialog.getByText("Do not import Codex auth.json.", { exact: false })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("gemini-import.png") });
+  await dialog.getByRole("radio", { name: "Gemini API key", exact: true }).check();
+  await dialog.getByLabel("Name", { exact: true }).fill("Gemini browser regression");
+  await dialog.getByLabel("Models", { exact: true }).fill("gemini-2.5-flash, gemini-2.5-pro");
+  await dialog.getByLabel("Gemini API key", { exact: true }).and(dialog.locator('input[type="password"]')).fill("disposable-gemini-browser-key");
+  await page.screenshot({ path: testInfo.outputPath("gemini-api-key.png") });
+  await dialog.getByRole("button", { name: "Connect account" }).click();
+  await expect(dialog).toBeHidden();
+  const sources = ModelSourcesResponseSchema.parse(await (await request.get("/api/model-sources/")).json());
+  const source = sources.sources.find((item) => item.name === "Gemini browser regression")!;
+  expect(source.kind).toBe("gemini_api_key");
+  expect(source.supportsChatCompletions).toBe(false);
+  expect(source.models.map((model) => model.model)).toEqual(["gemini-2.5-flash", "gemini-2.5-pro"]);
+  expect(JSON.stringify(source)).not.toContain("disposable-gemini-browser-key");
+  try {
+    const toggle = page.getByRole("switch", { name: "Toggle Gemini browser regression model source" });
+    await expect(toggle).toBeChecked();
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await page.getByRole("button", { name: "Edit Gemini browser regression model source" }).click();
+    const edit = page.getByRole("dialog", { name: "Edit model source" });
+    await expect(edit.getByText("Google Gemini API key", { exact: true })).toBeVisible();
+    await expect(edit.getByText(/Chat completions|Responses|Reasoning efforts/)).toHaveCount(0);
+    await edit.getByLabel("Name", { exact: true }).fill("Gemini browser updated");
+    await page.screenshot({ path: testInfo.outputPath("gemini-edit.png") });
+    await edit.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(edit).toBeHidden();
+    await expect(page.getByText("Gemini browser updated", { exact: true })).toBeVisible();
+    await page.goto("/dashboard");
+    await expect(page.getByText("Gemini browser updated", { exact: true })).toBeVisible();
+    await expect(page.getByText(/5-Hour Credits|Weekly Credits/)).toHaveCount(0);
+    const nativeAccounts = page.locator("section").filter({ has: page.getByRole("heading", { name: "Gemini accounts", level: 3 }) });
+    await nativeAccounts.screenshot({ path: testInfo.outputPath("gemini-dashboard-desktop.png") });
+    await resizeViewportAndSettle(page, { width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await nativeAccounts.screenshot({ path: testInfo.outputPath("gemini-dashboard-mobile.png") });
+    await page.goto("/accounts");
+    await page.getByRole("button", { name: "Delete Gemini browser updated model source" }).click();
+    await page.getByRole("alertdialog", { name: "Delete model source" }).getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(page.getByText("Gemini browser updated", { exact: true })).toHaveCount(0);
+    const remaining = ModelSourcesResponseSchema.parse(await (await request.get("/api/model-sources/")).json());
+    expect(remaining.sources.some((item) => item.id === source.id)).toBe(false);
+    expect(oauthRequests).toEqual([]);
+  } finally {
+    await request.delete(`/api/model-sources/${source.id}`);
+  }
 });
 
 test("dashboard usage donuts stay within supported viewports", async ({ page }) => {
@@ -206,7 +295,7 @@ test("dashboard usage donuts stay within supported viewports", async ({ page }) 
   await installMobileContainmentFixtures(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize(viewportCases[0].size);
-  await page.goto("/dashboard", { waitUntil: "networkidle" });
+  await page.goto("/legacy/dashboard", { waitUntil: "networkidle" });
 
   // Match only the two usage donut headings ("5-Hour Credits" / "Weekly
   // Credits"); the weekly runway card also carries a "Weekly credits pace"
@@ -418,7 +507,7 @@ test("deactivated account actions stay inside list cells and responsive cards", 
     createAccountSummary({ accountId: "acc_paused", displayName: "Paused account", status: "paused" }),
   ];
   await installMobileContainmentFixtures(page, accounts);
-  await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
+  await page.goto("/legacy/dashboard", { waitUntil: "domcontentloaded" });
   await page.getByRole("radio", { name: "View accounts as list" }).click();
   const row = page.getByTestId("account-list-row").filter({ hasText: "Recovery account" });
   await expect(row.getByRole("button", { name: "Resume Recovery account", exact: true })).toBeVisible();

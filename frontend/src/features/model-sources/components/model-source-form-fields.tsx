@@ -232,7 +232,7 @@ export function ModelSourceFormFields({
         </div>
       </div>
 
-      <div className="space-y-2">
+      {!isGoogle ? <div className="space-y-2">
 	        <div className="text-sm font-medium">{t("modelSources.fields.audioPricing")}</div>
 	        <p className="text-xs text-muted-foreground">
 	          {t("modelSources.fields.audioPricingDescription")}
@@ -248,10 +248,10 @@ export function ModelSourceFormFields({
             />
           </div>
         </div>
-      </div>
+      </div> : null}
 
       <div className="grid gap-2 sm:grid-cols-2">
-	        {CAPABILITY_TOGGLES.map(([key, labelKey]) => (
+	        {CAPABILITY_TOGGLES.filter(([key]) => !isGoogle || ["supportsStreaming", "supportsTools", "supportsVision"].includes(key)).map(([key, labelKey]) => (
           <label key={key} className="flex items-center gap-2 rounded-md border p-2 text-sm">
             <Checkbox
               checked={draft[key]}
@@ -277,7 +277,7 @@ export function ModelSourceFormFields({
         ))}
       </div>
 
-      {draft.supportsReasoning ? (
+      {!isGoogle && draft.supportsReasoning ? (
         <div className="space-y-3 rounded-md border p-3">
           <div>
             <div className="text-sm font-medium">{t("modelSources.fields.reasoningEfforts")}</div>

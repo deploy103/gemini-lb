@@ -6,8 +6,10 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { GeminiAccountDialog } from "@/features/model-sources/components/gemini-account-dialog";
 import { ModelSourceCreateDialog } from "@/features/model-sources/components/model-source-create-dialog";
 import { ModelSourceEditDialog } from "@/features/model-sources/components/model-source-edit-dialog";
+import { ModelSourceQuota } from "@/features/model-sources/components/model-source-quota";
 import { useModelSources } from "@/features/model-sources/hooks/use-model-sources";
 import type {
   ModelSource,
@@ -29,6 +31,7 @@ function modelPriceLabel(source: ModelSource): string | null {
 
 export type ModelSourcesSettingsProps = {
   disabled?: boolean;
+  geminiOnly?: boolean;
 };
 
 function protocolBadges(source: ModelSource) {
@@ -40,22 +43,26 @@ function protocolBadges(source: ModelSource) {
   ].filter((value): value is string => value !== null);
 }
 
-export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsProps) {
+export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: ModelSourcesSettingsProps) {
   const { t } = useTranslation();
   const {
     modelSourcesQuery,
     createMutation,
+    connectMutation,
     updateMutation,
     deleteMutation,
   } = useModelSources();
   const createDialog = useDialogState();
   const editDialog = useDialogState<ModelSource>();
   const deleteDialog = useDialogState<ModelSource>();
-  const sources = modelSourcesQuery.data?.sources ?? [];
+  const sources = (modelSourcesQuery.data?.sources ?? []).filter((source) =>
+    !geminiOnly || source.kind === "gemini_api_key" || source.kind === "gemini_code_assist",
+  );
   const busy =
     disabled ||
     modelSourcesQuery.isFetching ||
     createMutation.isPending ||
+    connectMutation.isPending ||
     updateMutation.isPending ||
     deleteMutation.isPending;
   const error =
@@ -80,8 +87,8 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
             <Database className="h-4 w-4 text-primary" aria-hidden="true" />
           </div>
           <div>
-	            <h3 className="text-sm font-semibold">{t("modelSources.title")}</h3>
-	            <p className="text-xs text-muted-foreground">{t("modelSources.description")}</p>
+	            <h3 className="text-sm font-semibold">{t(geminiOnly ? "gemini.accounts.title" : "modelSources.title")}</h3>
+	            <p className="text-xs text-muted-foreground">{t(geminiOnly ? "gemini.accounts.description" : "modelSources.description")}</p>
           </div>
         </div>
         <Button
@@ -92,7 +99,7 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
           onClick={() => createDialog.show()}
         >
           <Plus className="h-3.5 w-3.5" />
-	          {t("modelSources.actions.addSource")}
+	          {t(geminiOnly ? "gemini.accounts.add" : "modelSources.actions.addSource")}
         </Button>
       </div>
 
@@ -109,7 +116,9 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
                     <Badge variant={source.isEnabled ? "default" : "secondary"}>
 	                      {source.isEnabled ? t("common.states.enabled") : t("common.states.disabled")}
                     </Badge>
-                    {protocolBadges(source).map((protocol) => (
+                    {(source.kind.startsWith("gemini_")
+                      ? [source.kind === "gemini_code_assist" ? "Google OAuth / Code Assist" : "Gemini API key", source.healthStatus]
+                      : protocolBadges(source)).map((protocol) => (
                       <Badge key={protocol} variant="secondary">
                         {protocol}
                       </Badge>
@@ -161,21 +170,31 @@ export function ModelSourcesSettings({ disabled = false }: ModelSourcesSettingsP
                   </Button>
                 </div>
               </div>
+              {geminiOnly && source.kind === "gemini_code_assist" ? (
+                <div className="mt-3"><ModelSourceQuota sourceId={source.id} disabled={disabled} /></div>
+              ) : geminiOnly ? (
+                <p className="mt-3 text-xs text-muted-foreground">{t("gemini.accounts.unknownQuota")}</p>
+              ) : null}
             </div>
           ))
         ) : (
           <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-	            {t("modelSources.empty")}
+	            {t(geminiOnly ? "gemini.accounts.empty" : "modelSources.empty")}
           </div>
         )}
       </div>
 
-      <ModelSourceCreateDialog
+      {geminiOnly ? (createDialog.open ? <GeminiAccountDialog
+        busy={createMutation.isPending || connectMutation.isPending}
+        onClose={() => createDialog.hide()}
+        onCreate={createSource}
+        onConnect={(payload) => connectMutation.mutateAsync(payload)}
+      /> : null) : <ModelSourceCreateDialog
         open={createDialog.open}
         busy={createMutation.isPending}
         onOpenChange={createDialog.onOpenChange}
         onSubmit={createSource}
-      />
+      />}
 
       <ModelSourceEditDialog
         open={editDialog.open}

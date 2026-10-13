@@ -1,14 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { useModelSourceQuota } from "@/features/model-sources/hooks/use-model-source-quota";
 
-export function ModelSourceQuota({ sourceId }: { sourceId: string }) {
+export function ModelSourceQuota({ sourceId, disabled = false }: { sourceId: string; disabled?: boolean }) {
   const { snapshot, refresh } = useModelSourceQuota(sourceId);
   const data = snapshot.data;
   return (
     <section aria-label="Code Assist quota" className="space-y-3 rounded-md border p-4 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-medium">Code Assist quota</h3>
-        <Button type="button" variant="outline" size="sm" disabled={refresh.isPending || snapshot.isFetching}
+        <Button type="button" variant="outline" size="sm" disabled={disabled || refresh.isPending || snapshot.isFetching}
           onClick={() => refresh.mutate()}>
           {refresh.isPending ? "Refreshing quota…" : "Refresh quota"}
         </Button>

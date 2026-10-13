@@ -1,6 +1,8 @@
 import { del, get, patch, post } from "@/lib/api-client";
 
 import {
+  GoogleConnectionSchema,
+  type GoogleConnectionCompleteRequest,
   ModelSourceCreateRequestSchema,
   ModelSourceQuotaSchema,
   ModelSourceSchema,
@@ -9,6 +11,14 @@ import {
 } from "@/features/model-sources/schemas";
 
 const MODEL_SOURCES_PATH = "/api/model-sources";
+
+export function startGoogleConnection() {
+  return post(`${MODEL_SOURCES_PATH}/google/start`, GoogleConnectionSchema);
+}
+
+export function completeGoogleConnection(payload: GoogleConnectionCompleteRequest) {
+  return post(`${MODEL_SOURCES_PATH}/google/complete`, ModelSourceSchema, { body: payload });
+}
 
 export function getModelSourceQuota(sourceId: string) {
   return get(`${MODEL_SOURCES_PATH}/${encodeURIComponent(sourceId)}/quota`, ModelSourceQuotaSchema);

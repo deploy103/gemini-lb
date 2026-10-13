@@ -20,6 +20,8 @@ export const ADVANCED_NAV_ITEMS = [
 
 /** The permission a route needs, looked up from the nav definition (`null` for unlisted routes). */
 export function routePermission(pathname: string): Permission | null {
+  if (pathname === "/legacy/accounts") return "accounts:read";
+  if (pathname === "/legacy/dashboard") return "dashboard:read";
   const item = [...CORE_NAV_ITEMS, ...ADVANCED_NAV_ITEMS].find(
     (candidate) => pathname === candidate.to || pathname.startsWith(`${candidate.to}/`),
   );

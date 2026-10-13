@@ -3,12 +3,14 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import {
+  completeGoogleConnection,
   createModelSource,
   deleteModelSource,
   listModelSources,
   updateModelSource,
 } from "@/features/model-sources/api";
 import type {
+  GoogleConnectionCompleteRequest,
   ModelSourceCreateRequest,
   ModelSourceUpdateRequest,
 } from "@/features/model-sources/schemas";
@@ -33,6 +35,15 @@ export function useModelSources() {
     },
     onError: (error: Error) => {
       toast.error(error.message || t("modelSources.toasts.createFailed"));
+    },
+  });
+
+  const connectMutation = useMutation({
+    mutationFn: (payload: GoogleConnectionCompleteRequest) => completeGoogleConnection(payload),
+    onSuccess: () => {
+      toast.success(t("modelSources.toasts.created"));
+      void queryClient.invalidateQueries({ queryKey: ["model-sources", "list"] });
+      void queryClient.invalidateQueries({ queryKey: ["models"] });
     },
   });
 
@@ -66,6 +77,7 @@ export function useModelSources() {
   return {
     modelSourcesQuery,
     createMutation,
+    connectMutation,
     updateMutation,
     deleteMutation,
   };
