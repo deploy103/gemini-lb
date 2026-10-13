@@ -10,3 +10,7 @@ The two client-profile settings use the existing Settings resolver: deployment i
 
 Native CLI histories without custom session headers derive a stable first-user-content hash. Durable ownership remains scoped by key/provider; appended tool/signature turns retain their owner, while conflicting pins, other keys and disabled owners fail closed. Identical first content shares ownership; use a unique explicit session header for separate conversations and keep it across history compaction. Controls are preserved rather than silently stripping safety, output limits or tools. Paid-credit control fields are rejected, but JSON tool data containing the same property name is not mistaken for an opt-in.
 
+
+
+Live account gate: using the owner's existing Windows browser session, the primary personal login reached Google's account chooser and then the warning “Google을 통해 다운로드한 앱인지 확인하세요” (confirm the app was downloaded through Google). It names Google Antigravity because the configured profile is its installed-client identity from the public reference, not a separately registered gateway application. The agent did not confirm that warning or continue consent. The owner must review this unsupported third-party login path or complete login in the official client before proceeding. No real Google credential was saved to a source and no live generation was performed. The change remains active until free and AI Pro account inference and persisted usage are verified.
+
