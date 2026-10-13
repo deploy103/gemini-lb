@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { useModelSourceQuota } from "@/features/model-sources/hooks/use-model-source-quota";
+import { getErrorMessageOrNull } from "@/utils/errors";
 
 export function ModelSourceQuota({ sourceId, disabled = false }: { sourceId: string; disabled?: boolean }) {
   const { snapshot, refresh } = useModelSourceQuota(sourceId);
@@ -16,7 +17,7 @@ export function ModelSourceQuota({ sourceId, disabled = false }: { sourceId: str
       <p className="text-muted-foreground">Observed Google quota only. Refresh uses stored OAuth credentials, not unsaved edits.</p>
       {snapshot.isPending && <p role="status">Loading saved quota…</p>}
       {(snapshot.isError || refresh.isError) && (
-        <p role="alert">Quota could not be {refresh.isError ? "refreshed" : "loaded"}. Try Refresh quota again. Any snapshot below may be outdated.</p>
+        <p role="alert">Quota could not be {refresh.isError ? "refreshed" : "loaded"}. {getErrorMessageOrNull(refresh.error ?? snapshot.error)} Any snapshot below may be outdated.</p>
       )}
       {data && <>
         <p className="text-muted-foreground">

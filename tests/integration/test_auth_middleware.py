@@ -189,6 +189,7 @@ async def _assert_guest_write_denied(client: AsyncClient) -> None:
 
     for path, body in [
         ("/api/model-sources/google/start", {}),
+        ("/api/model-sources/missing/discover", {}),
         (
             "/api/model-sources/google/complete",
             {"transaction": "ticket", "code": "code", "models": [{"model": "gemini-2.5-flash"}]},

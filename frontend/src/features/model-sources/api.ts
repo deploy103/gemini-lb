@@ -3,6 +3,7 @@ import { del, get, patch, post } from "@/lib/api-client";
 import {
   GoogleConnectionSchema,
   type GoogleConnectionCompleteRequest,
+  GoogleDiscoverySchema,
   ModelSourceCreateRequestSchema,
   ModelSourceQuotaSchema,
   ModelSourceSchema,
@@ -26,6 +27,10 @@ export function getModelSourceQuota(sourceId: string) {
 
 export function refreshModelSourceQuota(sourceId: string) {
   return post(`${MODEL_SOURCES_PATH}/${encodeURIComponent(sourceId)}/quota`, ModelSourceQuotaSchema);
+}
+
+export function discoverGoogleModels(sourceId: string) {
+  return post(`${MODEL_SOURCES_PATH}/${encodeURIComponent(sourceId)}/discover`, GoogleDiscoverySchema);
 }
 
 export function listModelSources() {

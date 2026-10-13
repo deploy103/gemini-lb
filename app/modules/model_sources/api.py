@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
+import time
 
 from fastapi import APIRouter, Body, Depends, Request, Response
 
@@ -17,6 +19,7 @@ from app.core.utils.time import utcnow
 from app.db.models import GeminiQuota
 from app.dependencies import ModelSourcesContext, get_model_sources_context
 from app.modules.dashboard_auth.service import DASHBOARD_SESSION_COOKIE
+from app.modules.gemini.discovery import discover_google_models
 from app.modules.gemini.oauth import (
     CONNECTION_COOKIE,
     TRANSACTION_TTL,
@@ -29,6 +32,7 @@ from app.modules.gemini.transport import GoogleError, google_json
 from app.modules.model_sources.schemas import (
     GoogleConnectionCompleteRequest,
     GoogleConnectionStartResponse,
+    GoogleDiscoveryResponse,
     ModelSourceCreateRequest,
     ModelSourceQuotaResponse,
     ModelSourceResponse,
@@ -199,7 +203,7 @@ async def refresh_google_source_quota(
         result = await google_json(source, "/v1internal:retrieveUserQuota", {})
         await save_quota(source_id, result)
     except GoogleError as error:
-        raise DashboardBadRequestError(str(error), code="google_quota_failed") from None
+        raise DashboardBadRequestError(_google_dashboard_message(error), code="google_quota_failed") from None
     AuditService.log_async(
         "model_source_quota_refreshed",
         actor_ip=request.client.host if request.client else None,
@@ -208,3 +212,51 @@ async def refresh_google_source_quota(
         details={"source_id": source_id},
     )
     return ModelSourceQuotaResponse.model_validate({"buckets": result["buckets"], "updatedAt": utcnow()})
+
+
+@router.post("/{source_id}/discover", response_model=GoogleDiscoveryResponse)
+async def discover_google_source(
+    request: Request,
+    response: Response,
+    source_id: str,
+    principal: DashboardPrincipal = Depends(require_dashboard_write_access),
+    context: ModelSourcesContext = Depends(get_model_sources_context),
+) -> GoogleDiscoveryResponse:
+    source = await context.repository.get_by_id(source_id)
+    if source is None:
+        raise DashboardNotFoundError("Model source not found")
+    if source.kind not in {"gemini_api_key", "gemini_code_assist"} or not source.is_enabled:
+        raise DashboardBadRequestError("Enable a Google source before checking its connection")
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(30):
+            models = await discover_google_models(source)
+    except TimeoutError:
+        raise DashboardBadRequestError(
+            "Google metadata check timed out after 30 seconds", code="google_discovery_failed"
+        ) from None
+    except GoogleError as error:
+        raise DashboardBadRequestError(_google_dashboard_message(error), code="google_discovery_failed") from None
+    response.headers["Cache-Control"] = "no-store"
+    AuditService.log_async(
+        "model_source_discovered",
+        actor_ip=request.client.host if request.client else None,
+        actor=AuditActor.from_principal(principal),
+        target=AuditTarget("model_source", source_id),
+        details={"source_id": source_id, "model_count": len(models)},
+    )
+    return GoogleDiscoveryResponse(
+        origin="quota" if source.kind == "gemini_code_assist" else "catalog",
+        models=models,
+        checked_at=utcnow(),
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+def _google_dashboard_message(error: GoogleError) -> str:
+    guidance = {
+        401: "Reconnect Google or replace the API key.",
+        403: "Check Google API-key restrictions and project access.",
+        429: "Google rate limited this check; retry later.",
+    }.get(error.code, "Check the source configuration and retry.")
+    return f"{error} (HTTP {error.code}). {guidance}"

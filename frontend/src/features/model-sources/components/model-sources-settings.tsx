@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { GeminiAccountDialog } from "@/features/model-sources/components/gemini-account-dialog";
+import { GoogleSourceDiagnosticsDialog } from "@/features/model-sources/components/google-source-diagnostics-dialog";
 import { ModelSourceCreateDialog } from "@/features/model-sources/components/model-source-create-dialog";
 import { ModelSourceEditDialog } from "@/features/model-sources/components/model-source-edit-dialog";
 import { ModelSourceQuota } from "@/features/model-sources/components/model-source-quota";
@@ -55,6 +56,7 @@ export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: M
   const createDialog = useDialogState();
   const editDialog = useDialogState<ModelSource>();
   const deleteDialog = useDialogState<ModelSource>();
+  const diagnosticsDialog = useDialogState<ModelSource>();
   const sources = (modelSourcesQuery.data?.sources ?? []).filter((source) =>
     !geminiOnly || source.kind === "gemini_api_key" || source.kind === "gemini_code_assist",
   );
@@ -170,6 +172,14 @@ export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: M
                   </Button>
                 </div>
               </div>
+              {geminiOnly && <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button type="button" size="sm" variant="outline" disabled={busy || !source.isEnabled}
+                  onClick={() => diagnosticsDialog.show(source)}>
+                  {t("gemini.discovery.title")}
+                </Button>
+                {!source.models.some((model) => model.isEnabled) &&
+                  <p className="text-xs text-muted-foreground">{t("gemini.discovery.notRoutable")}</p>}
+              </div>}
               {geminiOnly && source.kind === "gemini_code_assist" ? (
                 <div className="mt-3"><ModelSourceQuota sourceId={source.id} disabled={disabled} /></div>
               ) : geminiOnly ? (
@@ -203,6 +213,13 @@ export function ModelSourcesSettings({ disabled = false, geminiOnly = false }: M
         onOpenChange={editDialog.onOpenChange}
         onSubmit={updateSource}
       />
+
+      {diagnosticsDialog.open && diagnosticsDialog.data ? <GoogleSourceDiagnosticsDialog
+        source={diagnosticsDialog.data}
+        disabled={busy}
+        onClose={() => diagnosticsDialog.hide()}
+        onApply={updateSource}
+      /> : null}
 
       <ConfirmDialog
         open={deleteDialog.open}

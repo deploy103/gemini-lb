@@ -553,7 +553,7 @@ async def test_google_browser_connection_registers_native_encrypted_account(
     assert authorization["code_challenge_method"] == ["S256"] and authorization["access_type"] == ["offline"]
     result = await async_client.post(
         "/api/model-sources/google/complete",
-        json={"transaction": start.json()["transaction"], "code": "google-code", "models": [{"model": MODEL}]},
+        json={"transaction": start.json()["transaction"], "code": "google-code"},
     )
     assert (
         "google-access" not in result.text and "google-refresh" not in result.text and "google-code" not in result.text
@@ -565,6 +565,7 @@ async def test_google_browser_connection_registers_native_encrypted_account(
     else:
         assert result.status_code == 200, result.text
         assert result.json()["name"] == "google-user@example.com"
+        assert result.json()["models"] == []
         assert result.json()["kind"] == "gemini_code_assist" and not result.json()["supportsChatCompletions"]
         async with SessionLocal() as session:
             source = await session.get(ModelSource, result.json()["id"])
@@ -616,3 +617,152 @@ async def test_google_connection_refuses_invalid_transactions_without_secret_dis
     assert reached_google == (["/token"] if invalid == "rejected-code" else [])
     assert "private-google-code" not in result.text and ticket not in result.text
     assert (await async_client.get("/api/model-sources/")).json()["sources"] == []
+
+
+async def test_google_dashboard_discovery_paginates_without_generating_or_enabling_models(
+    async_client, google_upstream
+):
+    seen = []
+    token = "next/+?&pageSize=9"
+
+    async def handler(request):
+        seen.append((request.method, request.path, dict(request.query), request.headers.get("x-goog-api-key")))
+        assert request.path == "/v1beta/models"
+        model = {
+            "name": f"models/{MODEL}",
+            "supportedGenerationMethods": ["generateContent"],
+            "inputTokenLimit": 4096,
+            "outputTokenLimit": 96,
+        }
+        if "pageToken" not in request.query:
+            return web.json_response({"models": [model], "nextPageToken": token})
+        return web.json_response(
+            {
+                "models": [
+                    model,
+                    {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
+                    {"name": "models/legacy", "supportedGenerationMethods": ["generateMessage"]},
+                ]
+            }
+        )
+
+    source_id = await _source(async_client, await google_upstream(handler))
+    assert (await async_client.patch(f"/api/model-sources/{source_id}", json={"models": []})).status_code == 200
+    key = await _key(async_client)
+    denied = await async_client.post(
+        f"/v1beta/models/{MODEL}:generateContent", headers={"x-goog-api-key": key["key"]}, json=BODY
+    )
+    assert denied.status_code == 503 and seen == []
+    result = await async_client.post(f"/api/model-sources/{source_id}/discover")
+    assert result.status_code == 200, result.text
+    assert result.headers["cache-control"] == "no-store"
+    data = result.json()
+    assert data["origin"] == "catalog" and data["elapsedMs"] >= 0 and data["checkedAt"]
+    assert [model["model"] for model in data["models"]] == [MODEL, "text-embedding-004"]
+    assert data["models"][0]["contextWindow"] == 4096 and data["models"][0]["maxOutputTokens"] == 96
+    assert data["models"][0]["supportsTools"] is False and data["models"][1]["supportsStreaming"] is False
+    assert seen == [
+        ("GET", "/v1beta/models", {"pageSize": "100"}, "upstream-google"),
+        ("GET", "/v1beta/models", {"pageSize": "100", "pageToken": token}, "upstream-google"),
+    ]
+    assert "upstream-google" not in result.text
+    source = (await async_client.get("/api/model-sources/")).json()["sources"][0]
+    assert source["models"] == [] and source["healthStatus"] == "unknown"
+    advertised = await async_client.get("/v1beta/models", headers={"x-goog-api-key": key["key"]})
+    assert advertised.status_code == 503
+    await _source(async_client, await google_upstream(handler), "configured")
+    advertised = await async_client.get("/v1beta/models", headers={"x-goog-api-key": key["key"]})
+    assert advertised.status_code == 200
+    assert [model["name"] for model in advertised.json()["models"]] == [f"models/{MODEL}"]
+
+
+@pytest.mark.parametrize("failure", ["loop", "pages", "oversized", "malformed", "limits", "forbidden", "disabled"])
+async def test_google_dashboard_discovery_refuses_invalid_or_disabled_sources(async_client, google_upstream, failure):
+    seen = []
+
+    async def handler(request):
+        seen.append(request.path)
+        if failure == "forbidden":
+            return web.json_response({"error": {"message": "private upstream-google credential"}}, status=403)
+        if failure == "loop":
+            return web.json_response({"models": [], "nextPageToken": "repeated"})
+        if failure == "pages":
+            return web.json_response({"models": [], "nextPageToken": str(len(seen))})
+        if failure == "oversized":
+            return web.json_response(
+                {"models": [{"name": f"models/{MODEL}", "supportedGenerationMethods": ["generateContent"]}] * 1001}
+            )
+        if failure == "limits":
+            return web.json_response(
+                {
+                    "models": [
+                        {
+                            "name": f"models/{MODEL}",
+                            "supportedGenerationMethods": ["generateContent"],
+                            "inputTokenLimit": True,
+                        }
+                    ]
+                }
+            )
+        return web.json_response({"models": None})
+
+    source_id = await _source(async_client, await google_upstream(handler))
+    before = (await async_client.get("/api/model-sources/")).json()["sources"][0]["models"]
+    if failure == "disabled":
+        await async_client.patch(f"/api/model-sources/{source_id}", json={"isEnabled": False})
+    response = await async_client.post(f"/api/model-sources/{source_id}/discover")
+    assert response.status_code == 400, response.text
+    assert "upstream-google" not in response.text and "private" not in response.text
+    assert len(seen) == (0 if failure == "disabled" else 2 if failure == "loop" else 10 if failure == "pages" else 1)
+    if failure == "forbidden":
+        assert "project access" in response.json()["error"]["message"]
+    assert (await async_client.get("/api/model-sources/")).json()["sources"][0]["models"] == before
+
+
+@pytest.mark.parametrize("mismatched_project", [False, True])
+async def test_google_dashboard_discovery_uses_existing_project_and_observed_quota(
+    async_client, google_upstream, mismatched_project
+):
+    seen = []
+
+    async def handler(request):
+        seen.append(request.path)
+        assert request.headers["authorization"] == "Bearer private-oauth-token"
+        body = await request.json()
+        if request.path.endswith(":loadCodeAssist"):
+            assert body["cloudaicompanionProject"] == "operator-project"
+            return web.json_response(
+                {
+                    "currentTier": {"id": "standard"},
+                    "cloudaicompanionProject": "wrong-project" if mismatched_project else "operator-project",
+                }
+            )
+        assert body["project"] == "operator-project"
+        return web.json_response(
+            {"buckets": [{"modelId": MODEL, "remainingFraction": 0.25}, {"modelId": MODEL, "remainingFraction": 0.5}]}
+        )
+
+    source_id = await _source(
+        async_client,
+        await google_upstream(handler),
+        kind="gemini_code_assist",
+        credential=json.dumps(
+            {
+                "project": "operator-project",
+                "access_token": "private-oauth-token",
+                "expiry_date": time.time() * 1000 + 3600000,
+            }
+        ),
+    )
+    response = await async_client.post(f"/api/model-sources/{source_id}/discover")
+    assert response.status_code == (400 if mismatched_project else 200), response.text
+    assert "private-oauth-token" not in response.text
+    quota = (await async_client.get(f"/api/model-sources/{source_id}/quota")).json()
+    if mismatched_project:
+        assert seen == ["/v1internal:loadCodeAssist"] and quota["updatedAt"] is None
+    else:
+        assert seen == ["/v1internal:loadCodeAssist", "/v1internal:retrieveUserQuota"]
+        assert response.json()["origin"] == "quota" and [model["model"] for model in response.json()["models"]] == [
+            MODEL
+        ]
+        assert quota["buckets"][0]["remainingFraction"] == 0.25 and quota["updatedAt"]

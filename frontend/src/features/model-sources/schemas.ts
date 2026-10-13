@@ -116,3 +116,10 @@ export type ModelSourceModel = z.infer<typeof ModelSourceModelSchema>;
 export type ModelSourceModelInput = z.infer<typeof ModelSourceModelInputSchema>;
 export type ModelSourceCreateRequest = z.infer<typeof ModelSourceCreateRequestSchema>;
 export type ModelSourceUpdateRequest = z.infer<typeof ModelSourceUpdateRequestSchema>;
+
+export const GoogleDiscoverySchema = z.object({
+  origin: z.enum(["catalog", "quota"]),
+  models: z.array(ModelSourceModelInputSchema),
+  checkedAt: z.iso.datetime({ offset: true }),
+  elapsedMs: z.number().int().nonnegative(),
+});
