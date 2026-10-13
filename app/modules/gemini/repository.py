@@ -86,13 +86,9 @@ async def eligible_sources(
             if source.kind == kind
             and source.health_status != "reauth_required"
             and (allowed is None or source.id in allowed)
-            and (
-                not model
-                or not source.models
-                or any(
-                    entry.model == model and entry.is_enabled and (not streaming or entry.supports_streaming)
-                    for entry in source.models
-                )
+            and any(
+                entry.is_enabled and (not model or entry.model == model) and (not streaming or entry.supports_streaming)
+                for entry in source.models
             )
         ]
         last_used = {

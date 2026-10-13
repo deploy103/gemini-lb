@@ -5,11 +5,12 @@ import { http, HttpResponse } from "msw";
 
 import { renderWithProviders } from "@/test/utils";
 import { server } from "@/test/mocks/server";
-import type { ModelSource } from "@/features/model-sources/schemas";
+import { ModelSourceSchema, ModelSourceUpdateRequestSchema, type ModelSource } from "@/features/model-sources/schemas";
 
 import { ModelSourceEditDialog } from "./model-source-edit-dialog";
 import { ModelSourceCreateDialog } from "./model-source-create-dialog";
-import { createModelSource as createSource, updateModelSource } from "@/features/model-sources/api";
+import { GoogleSourceDiagnosticsDialog } from "./google-source-diagnostics-dialog";
+import { createModelSource as createSource, listModelSources, updateModelSource } from "@/features/model-sources/api";
 
 function createModelSource(overrides: Partial<ModelSource> = {}): ModelSource {
   return {
@@ -78,6 +79,7 @@ describe("ModelSourceEditDialog", () => {
     expect(screen.queryByText(/999/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Refresh quota" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Quota could not be refreshed");
+    expect(screen.getByRole("alert")).toHaveTextContent("Unavailable");
     expect(screen.getByText("Remaining: 0%")).toBeInTheDocument();
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
@@ -464,5 +466,61 @@ describe("ModelSourceEditDialog", () => {
     });
 
     expect(onSubmit.mock.calls[0][1].apiKey).toBe("sk-new-token");
+  });
+});
+
+describe("GoogleSourceDiagnosticsDialog", () => {
+  it("reports failures and explicitly adds selected models without replacing current operator overrides", async () => {
+    const user = userEvent.setup();
+    const source = createModelSource({ name: "Google discovery", kind: "gemini_api_key",
+      models: [{ ...createModelSource().models[0], model: "gemini-2.5-flash", inputPer1M: 0.75,
+        isEnabled: false, supportsVision: true }] });
+    let saved = source;
+    server.use(http.get("/api/model-sources/", () => HttpResponse.json({ sources: [saved] })),
+      http.patch("/api/model-sources/:id", async ({ request }) => {
+        const payload = ModelSourceUpdateRequestSchema.parse(await request.json());
+        saved = ModelSourceSchema.parse({ ...saved, models: payload.models?.map((model, index) => ({
+          ...model, id: index + 1, sourceId: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt,
+        })) ?? saved.models });
+        return HttpResponse.json(saved);
+      }));
+    let fail = true;
+    server.use(http.post("/api/model-sources/:id/discover", () => fail
+      ? HttpResponse.json({ error: { code: "google_discovery_failed", message: "Check Google project access." } }, { status: 400 })
+      : HttpResponse.json({ origin: "catalog", checkedAt: "2026-10-13T00:00:00Z", elapsedMs: 73,
+        models: [{ model: "gemini-2.5-flash", inputPer1M: 0, supportsVision: false },
+          { model: "gemini-2.5-pro", contextWindow: 4096, maxOutputTokens: 96 },
+          { model: "text-embedding-004", supportsStreaming: false }] })));
+    renderWithProviders(<GoogleSourceDiagnosticsDialog source={source} disabled={false} onClose={() => {}}
+      onApply={async (id, payload) => { await updateModelSource(id, payload); }} />);
+    const apply = screen.getByRole("button", { name: "Add selected models (0)" });
+    expect(apply).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Check connection and discover models" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check Google project access.");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Check connection and discover models" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Metadata check succeeded · 3 models · 73 ms");
+    expect(screen.getByRole("checkbox", { name: /gemini-2.5-flash/ })).toBeDisabled();
+    await user.type(screen.getByLabelText("Search discovered models"), "pro");
+    expect(screen.queryByRole("checkbox", { name: /text-embedding/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /gemini-2.5-pro/ }));
+    // Another edit after opening the dialog must not be reverted by its old snapshot.
+    await updateModelSource(source.id, { models: [{ model: "gemini-2.5-flash", inputPer1M: 9.5,
+      isEnabled: false, supportsVision: true }, { model: "manual-model", outputPer1M: 4 }] });
+    await user.click(screen.getByRole("button", { name: "Add selected models (1)" }));
+    await waitFor(async () => {
+      const saved = (await listModelSources()).sources.find((item) => item.id === source.id)!;
+      expect(saved.models.map((model) => model.model)).toEqual(["gemini-2.5-flash", "manual-model", "gemini-2.5-pro"]);
+      expect(saved.models[0]).toMatchObject({ inputPer1M: 9.5, isEnabled: false, supportsVision: true });
+      expect(saved.models[1].outputPer1M).toBe(4);
+      expect(saved.models[2]).toMatchObject({ contextWindow: 4096, maxOutputTokens: 96 });
+    });
+  });
+
+  it("keeps diagnosis and apply unavailable to read-only users", () => {
+    renderWithProviders(<GoogleSourceDiagnosticsDialog source={createModelSource({ kind: "gemini_api_key" })}
+      disabled onClose={() => {}} onApply={async () => {}} />);
+    expect(screen.getByRole("button", { name: "Check connection and discover models" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add selected models (0)" })).toBeDisabled();
   });
 });

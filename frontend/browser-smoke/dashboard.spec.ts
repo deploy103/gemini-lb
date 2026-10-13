@@ -1,7 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { createServer } from "node:http";
 
 import { AuthSessionSchema } from "../src/features/auth/schemas";
-import { ModelSourcesResponseSchema } from "../src/features/model-sources/schemas";
+import { ModelSourceSchema, ModelSourcesResponseSchema } from "../src/features/model-sources/schemas";
 import {
   createAccountSummary,
   createDashboardAuthSession,
@@ -240,7 +241,6 @@ test("primary accounts connects through Google and manages native Gemini credent
   await page.screenshot({ path: testInfo.outputPath("gemini-import.png") });
   await dialog.getByRole("radio", { name: "Gemini API key", exact: true }).check();
   await dialog.getByLabel("Name", { exact: true }).fill("Gemini browser regression");
-  await dialog.getByLabel("Models", { exact: true }).fill("gemini-2.5-flash, gemini-2.5-pro");
   await dialog.getByLabel("Gemini API key", { exact: true }).and(dialog.locator('input[type="password"]')).fill("disposable-gemini-browser-key");
   await page.screenshot({ path: testInfo.outputPath("gemini-api-key.png") });
   await dialog.getByRole("button", { name: "Connect account" }).click();
@@ -249,7 +249,7 @@ test("primary accounts connects through Google and manages native Gemini credent
   const source = sources.sources.find((item) => item.name === "Gemini browser regression")!;
   expect(source.kind).toBe("gemini_api_key");
   expect(source.supportsChatCompletions).toBe(false);
-  expect(source.models.map((model) => model.model)).toEqual(["gemini-2.5-flash", "gemini-2.5-pro"]);
+  expect(source.models).toEqual([]);
   expect(JSON.stringify(source)).not.toContain("disposable-gemini-browser-key");
   try {
     const toggle = page.getByRole("switch", { name: "Toggle Gemini browser regression model source" });
@@ -261,10 +261,14 @@ test("primary accounts connects through Google and manages native Gemini credent
     await expect(edit.getByText("Google Gemini API key", { exact: true })).toBeVisible();
     await expect(edit.getByText(/Chat completions|Responses|Reasoning efforts/)).toHaveCount(0);
     await edit.getByLabel("Name", { exact: true }).fill("Gemini browser updated");
+    await edit.getByLabel("Models", { exact: true }).fill("gemini-2.5-flash, gemini-2.5-pro");
     await page.screenshot({ path: testInfo.outputPath("gemini-edit.png") });
     await edit.getByRole("button", { name: "Save", exact: true }).click();
     await expect(edit).toBeHidden();
     await expect(page.getByText("Gemini browser updated", { exact: true })).toBeVisible();
+    const configured = ModelSourcesResponseSchema.parse(await (await request.get("/api/model-sources/")).json());
+    expect(configured.sources.find((item) => item.id === source.id)!.models.map((model) => model.model))
+      .toEqual(["gemini-2.5-flash", "gemini-2.5-pro"]);
     await page.goto("/dashboard");
     await expect(page.getByText("Gemini browser updated", { exact: true })).toBeVisible();
     await expect(page.getByText(/5-Hour Credits|Weekly Credits/)).toHaveCount(0);
@@ -282,6 +286,98 @@ test("primary accounts connects through Google and manages native Gemini credent
     expect(oauthRequests).toEqual([]);
   } finally {
     await request.delete(`/api/model-sources/${source.id}`);
+  }
+});
+
+test("Google discovery applies selected models through the real backend", async ({ page, request }, testInfo) => {
+  let reject = true;
+  const observed: string[] = [];
+  const upstream = createServer((req, res) => {
+    const path = new URL(req.url!, "http://fixture").pathname;
+    observed.push(`${req.method} ${path}`);
+    res.writeHead(reject ? 403 : 200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(reject ? { error: { message: "private-browser-discovery-key" } }
+      : path.endsWith(":loadCodeAssist") ? { currentTier: { id: "standard" }, cloudaicompanionProject: "fixture-project" }
+      : path.endsWith(":retrieveUserQuota") ? { buckets: [{ modelId: "gemini-2.5-flash", remainingFraction: 0.75 }] }
+      : { models: [
+      { name: "models/gemini-2.5-flash", displayName: "Gemini Flash", supportedGenerationMethods: ["generateContent"], inputTokenLimit: 32768, outputTokenLimit: 8192 },
+      { name: "models/gemini-2.5-pro", displayName: "Gemini Pro", supportedGenerationMethods: ["generateContent"], inputTokenLimit: 65536, outputTokenLimit: 4096 },
+    ] }));
+  });
+  await new Promise<void>((resolve, rejectListen) => {
+    upstream.once("error", rejectListen);
+    upstream.listen(0, "127.0.0.1", resolve);
+  });
+  let sourceId: string | undefined;
+  try {
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing discovery fixture port");
+    const created = await request.post("/api/model-sources/", { data: { name: "Google model discovery", kind: "gemini_api_key",
+      baseUrl: `http://127.0.0.1:${address.port}`, apiKey: "private-browser-discovery-key", models: [] } });
+    expect(created.ok()).toBe(true);
+    sourceId = ModelSourceSchema.parse(await created.json()).id;
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/accounts");
+    await acceptTelemetryConsentIfShown(page);
+    await expect(page.getByText("No enabled models: this account cannot route requests yet.")).toBeVisible();
+    await page.getByRole("button", { name: "Connection & models", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Connection & models" });
+    await expect(dialog).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("discovery-default.png"), animations: "disabled" });
+    await dialog.getByRole("button", { name: "Check connection and discover models" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("project access");
+    await expect(dialog.getByRole("alert")).not.toContainText("private-browser-discovery-key");
+    await page.screenshot({ path: testInfo.outputPath("discovery-error.png"), animations: "disabled" });
+    reject = false;
+    await dialog.getByRole("button", { name: "Check connection and discover models" }).click();
+    await expect(dialog.getByRole("status")).toContainText("Metadata check succeeded · 2 models");
+    await dialog.getByRole("checkbox", { name: /gemini-2.5-pro/ }).check();
+    for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 568 }]) {
+      await resizeViewportAndSettle(page, size);
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await expect(dialog.getByRole("button", { name: "Add selected models (1)" })).toBeInViewport({ ratio: 1 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+      await page.screenshot({ path: testInfo.outputPath(`discovery-selected-${size.width}.png`), animations: "disabled" });
+      if (size.width === 320) {
+        const selected = dialog.getByRole("checkbox", { name: /gemini-2.5-pro/ });
+        await selected.scrollIntoViewIfNeeded();
+        await expect(selected).toBeInViewport({ ratio: 1 });
+        await expect(dialog.getByRole("button", { name: "Add selected models (1)" })).toBeInViewport({ ratio: 1 });
+        await page.screenshot({ path: testInfo.outputPath("discovery-selected-scrolled-320.png"), animations: "disabled" });
+      }
+    }
+    await dialog.getByRole("button", { name: "Add selected models (1)" }).click();
+    await expect(dialog).toBeHidden();
+    const saved = ModelSourcesResponseSchema.parse(await (await request.get("/api/model-sources/")).json()).sources.find((item) => item.id === sourceId)!;
+    expect(saved.models.map((model) => model.model)).toEqual(["gemini-2.5-pro"]);
+    expect(saved.models[0].contextWindow).toBe(65536);
+    expect(saved.models[0].maxOutputTokens).toBe(4096);
+    expect(observed).toEqual(["GET /v1beta/models", "GET /v1beta/models"]);
+    await request.delete(`/api/model-sources/${sourceId}`);
+    const oauth = await request.post("/api/model-sources/", { data: { name: "Code Assist metadata", kind: "gemini_code_assist",
+      baseUrl: `http://127.0.0.1:${address.port}`, apiKey: JSON.stringify({ project: "fixture-project",
+        access_token: "private-codeassist-fixture", expiry_date: Date.now() + 3600000 }), models: [] } });
+    expect(oauth.ok()).toBe(true);
+    sourceId = ModelSourceSchema.parse(await oauth.json()).id;
+    await resizeViewportAndSettle(page, { width: 1440, height: 900 });
+    await page.goto("/accounts");
+    await page.getByRole("button", { name: "Connection & models", exact: true }).click();
+    await dialog.getByRole("button", { name: "Check connection and discover models" }).click();
+    await expect(dialog.getByText(/Model IDs observed in Google quota, not a complete catalog/)).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("discovery-quota.png"), animations: "disabled" });
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    const quota = page.getByRole("region", { name: "Code Assist quota" });
+    await expect(quota.getByText("Remaining: 75%", { exact: true })).toBeVisible();
+    reject = true;
+    await quota.getByRole("button", { name: "Refresh quota", exact: true }).click();
+    await expect(quota.getByRole("alert")).toContainText("HTTP 403");
+    await expect(quota.getByRole("alert")).toContainText("project access");
+    await expect(quota.getByText("Remaining: 75%", { exact: true })).toBeVisible();
+    await quota.screenshot({ path: testInfo.outputPath("discovery-quota-error.png"), animations: "disabled" });
+    expect(observed.slice(2)).toEqual(["POST /v1internal:loadCodeAssist", "POST /v1internal:retrieveUserQuota", "POST /v1internal:retrieveUserQuota"]);
+  } finally {
+    if (sourceId) await request.delete(`/api/model-sources/${sourceId}`);
+    await new Promise<void>((resolve, rejectClose) => upstream.close((error) => error ? rejectClose(error) : resolve()));
   }
 });
 

@@ -377,7 +377,7 @@ async def _dispatch(
                     if isinstance(entry, dict)
                     and isinstance((name := entry.get("name")), str)
                     and (not allowed_models or name.removeprefix("models/") in allowed_models)
-                    and (not source.models or name.removeprefix("models/") in source_models)
+                    and name.removeprefix("models/") in source_models
                 ]
             usage = _usage(result) if billable else SourceUsage(0, 0)
             owner.content_delivered = True

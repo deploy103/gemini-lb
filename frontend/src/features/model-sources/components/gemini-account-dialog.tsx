@@ -33,10 +33,6 @@ export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Prop
     setError(null);
     const modelInputs = [...new Set(models.split(/[,\n]/).map((id) => id.trim()).filter(Boolean))]
       .map((model) => ({ model, supportsStreaming: true, supportsTools: true, supportsVision: true }));
-    if (modelInputs.length === 0) {
-      setError(t("modelSources.validation.modelsRequired"));
-      return;
-    }
     try {
       if (mode === "google" && start.data) {
         await onConnect({
@@ -86,10 +82,10 @@ export function GeminiAccountDialog({ busy, onClose, onCreate, onConnect }: Prop
             </label>
             <label className="block space-y-1.5 text-sm font-medium">
               {t("apiKeys.table.models")}
-              <Input value={models} onChange={(event) => setModels(event.target.value)} required disabled={working}
+              <Input value={models} onChange={(event) => setModels(event.target.value)} disabled={working}
                 autoComplete="off" placeholder="gemini-2.5-flash, gemini-2.5-pro" />
             </label>
-            <p className="text-xs text-muted-foreground">{t("gemini.accounts.modelsHelp")}</p>
+            <p className="text-xs text-muted-foreground">{t("gemini.discovery.optionalModels")}</p>
             {mode === "google" ? <>
               <label className="block space-y-1.5 text-sm font-medium">
                 {t("gemini.accounts.project")}

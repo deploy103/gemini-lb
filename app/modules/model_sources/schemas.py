@@ -93,7 +93,14 @@ class GoogleConnectionCompleteRequest(DashboardModel):
     code: str = Field(min_length=1, max_length=2048, repr=False)
     name: str | None = Field(default=None, min_length=1, max_length=128)
     project: str | None = Field(default=None, min_length=1, max_length=256)
-    models: list[ModelSourceModelInput] = Field(min_length=1, max_length=100)
+    models: list[ModelSourceModelInput] = Field(default_factory=list, max_length=100)
+
+
+class GoogleDiscoveryResponse(DashboardModel):
+    origin: Literal["catalog", "quota"]
+    models: list[ModelSourceModelInput]
+    checked_at: datetime
+    elapsed_ms: int
 
 
 class ModelSourceQuotaResponse(DashboardModel):
