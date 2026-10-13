@@ -78,8 +78,10 @@ def _callback(query):
         ("free-existing", False, True, 0),
         ("free", True, True, 1),
         ("free", False, False, 0),
-        ("paid-only", True, False, 0),
-        ("none-offered", True, False, 0),
+        ("non-free-advertised", True, False, 1),
+        ("none-offered", True, True, 1),
+        ("none-offered", False, False, 0),
+        ("catalog-absent", True, True, 1),
         ("validation", True, False, 0),
         ("privacy", True, False, 0),
         ("terms", True, False, 0),
@@ -126,6 +128,8 @@ async def test_antigravity_account_metadata_and_explicit_free_setup(
                 return web.json_response({"projectId": "managed-project"})
             if case == "project-object":
                 return web.json_response({"project": {"id": "managed-project"}})
+            if case == "catalog-absent":
+                return web.json_response({})
             if case == "validation":
                 return web.json_response(
                     {
@@ -155,7 +159,9 @@ async def test_antigravity_account_metadata_and_explicit_free_setup(
                 {
                     "allowedTiers": []
                     if case == "none-offered"
-                    else [{"id": "standard-tier" if case == "paid-only" else "free-tier"}]
+                    else [{"id": "standard-tier", "isDefault": True}]
+                    if case == "non-free-advertised"
+                    else [{"id": "free-tier"}]
                 }
             )
         assert request.path == "/onboard"
@@ -166,6 +172,8 @@ async def test_antigravity_account_metadata_and_explicit_free_setup(
         assert request.headers["User-Agent"] == antigravity.ONBOARD_USER_AGENT
         if case == "pending":
             return web.json_response({"done": False, "name": "operations/pending"})
+        if case == "non-free-advertised":
+            return web.json_response({"error": {"message": "private-refresh"}}, status=403)
         if case == "failed":
             return web.json_response({"error": {"message": "private-refresh"}}, status=400)
         if case == "onboard-validation":

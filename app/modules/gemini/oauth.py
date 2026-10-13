@@ -255,18 +255,14 @@ async def complete_connection(
             code="google_setup_required",
         )
     if not resolved_project and kind == "gemini_antigravity" and allow_free_setup:
-        tiers = setup.get("allowedTiers")
-        offered_free = isinstance(tiers, list) and any(
-            isinstance(tier, dict) and tier.get("id") == "free-tier" and not _requires_validation(tier)
-            for tier in tiers
-        )
-        if offered_free:
-            resolved_project = await _initialize_free_account(headers, 60 - (time.monotonic() - setup_started))
+        # Discovery may omit free-tier even when Google accepts free onboarding.
+        # Never substitute Google's default/current tier: it may not be free.
+        resolved_project = await _initialize_free_account(headers, 60 - (time.monotonic() - setup_started))
     if not resolved_project:
         if kind == "gemini_antigravity":
             raise DashboardBadRequestError(
-                "Google did not return an Antigravity project. Free initialization requires explicit consent "
-                "and a Google-offered free tier. Complete any required setup in the official Antigravity client.",
+                "Google did not return an Antigravity project. Explicitly permit a free-tier initialization attempt, "
+                "or complete any required setup in the official Antigravity client.",
                 code="google_setup_required",
             )
         raise DashboardBadRequestError(
@@ -321,7 +317,7 @@ def _requires_validation(payload: dict[str, JsonValue]) -> bool:
 
 async def _initialize_free_account(headers: dict[str, str], remaining_seconds: float) -> str:
     # Bounded repeated onboardUser requests follow CLIProxyAPI's control-plane
-    # protocol, but only with an explicitly offered free tier and operator consent.
+    # protocol, but only request free-tier with operator consent, never a default tier.
     # Reference attribution: app/modules/gemini/CLIProxyAPI-MIT.txt.
     body: dict[str, JsonValue] = {
         "tier_id": "free-tier",
