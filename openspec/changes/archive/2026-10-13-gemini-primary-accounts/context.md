@@ -1,0 +1,13 @@
+# Context
+
+Google credentials already belong to ModelSource; creating a parallel account table would duplicate selection, encryption, refresh and quota ownership. Primary Accounts will reuse that source contract. Legacy Codex APIs remain for compatibility and their pages remain explicitly labelled.
+
+Google's installed-client loopback callback cannot reach a remote VM from the user's browser. Use the official Gemini CLI remote authorization-code landing page and S256 PKCE, then accept the Google-issued code in the authenticated dashboard. Keep the transaction encrypted, short-lived and bound to the initiating dashboard session. Do not pretend this is OpenAI deviceauth or register a public callback on Google's client.
+
+An existing Code Assist account can resolve its project using loadCodeAssist. If it needs onboarding or validation, stop with instructions to finish setup in the official CLI; do not silently call onboardUser or enable paid credits. Example: an operator signs into Google, pastes the returned authorization code, and registers the returned project as an encrypted gemini_code_assist source. Gemini API keys remain a separate registration path.
+
+Verification passed: 195 backend gateway/auth/source-routing cases, 31 native gateway/legacy-import cases after the final type correction, 1,653 frontend tests, nine real-backend browser cases, backend architecture/lint/format/type checks, frontend lint/types/build, and strict OpenSpec validation. Browser checks exercise the primary Accounts route, actual Google authorization URL generation, API-key creation/edit/disable/delete, retained legacy controls, and scrolling to the authorization code at 320/390px. OAuth token exchange, identity and project resolution use local HTTP fixtures; no live Google consent, token exchange or inference was performed.
+
+The production VM built the copied Dockerfile and runs the application commit from its existing Git checkout. The previous container is retained stopped for rollback; the persistent volume, environment, admin credentials, port and proxy configuration were preserved. HTTPS returned 200. Windows Aside verified the signed-in Gemini account page and generated a production accounts.google.com link using S256 PKCE and the official remote redirect.
+
+Publication remains blocked by GitHub push protection matching the official installed-client constants. Both values were compared directly against Google's public Gemini CLI source and match. No protection bypass, obfuscation, credential change or security-setting change was applied. GitHub publication and new cloud CI require resolution of these two findings; deployment used a Git bundle instead of an unpublished remote ref.

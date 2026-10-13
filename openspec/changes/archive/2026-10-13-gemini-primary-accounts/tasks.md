@@ -9,4 +9,4 @@
 - [x] Verify native account registration, controls and quota through frontend public interactions.
 - [x] Run native gateway regression tests, frontend checks, build and OpenSpec validation.
 - [x] Render and inspect desktop/mobile account, login and dashboard states.
-- [ ] Deploy the verified application update and inspect HTTPS without changing infrastructure.
+- [x] Deploy the verified application update and inspect HTTPS without changing infrastructure.
