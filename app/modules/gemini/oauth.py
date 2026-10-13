@@ -328,6 +328,7 @@ async def _initialize_free_account(headers: dict[str, str], remaining_seconds: f
         "User-Agent": antigravity.ONBOARD_USER_AGENT,
         "X-Goog-Api-Client": "gl-node/22.21.1",
     }
+    failure = "Google's initialization operation remained pending after five polls."
     try:
         async with asyncio.timeout(max(0, remaining_seconds)):
             for attempt in range(5):
@@ -338,20 +339,25 @@ async def _initialize_free_account(headers: dict[str, str], remaining_seconds: f
                     payload=body,
                 )
                 if _requires_validation(result):
+                    failure = "Google requires validation, privacy review or terms acceptance."
                     break
                 if result.get("done") is True:
                     response = result.get("response")
                     project = antigravity.account_project(response) if isinstance(response, dict) else None
                     if project:
                         return project
+                    failure = "Google completed initialization without returning a project."
                     break
                 if attempt < 4:
                     await asyncio.sleep(2)
-    except (TimeoutError, DashboardBadRequestError):
-        pass
+    except TimeoutError:
+        failure = "The bounded Google initialization deadline expired."
+    except DashboardBadRequestError as error:
+        # _google_request has already removed upstream bodies and credentials.
+        failure = error.message
     raise DashboardBadRequestError(
         "Google free initialization was attempted but a usable project was not confirmed. "
-        "It may still be pending or require validation, privacy review or terms acceptance. "
+        f"{failure} "
         "Check the official Antigravity client before trying again.",
         code="google_setup_required",
     )

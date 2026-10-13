@@ -11,6 +11,10 @@ The gateway SHALL support a distinct encrypted Antigravity OAuth source for free
 - **WHEN** project discovery returns neither a project nor an explicit validation gate and the operator permits free initialization
 - **THEN** the gateway attempts only free-tier even if a catalog is absent or another tier is advertised, and refuses registration if Google rejects that attempt
 
+#### Scenario: Google rejects free initialization
+- **WHEN** the initialization endpoint returns HTTP 403
+- **THEN** the connection error reports that initialization was attempted and retains the sanitized HTTP status without exposing Google's response body or credentials
+
 #### Scenario: Callback is from another authorization attempt
 - **WHEN** callback state does not match the encrypted transaction
 - **THEN** the gateway refuses before exchanging the authorization code
