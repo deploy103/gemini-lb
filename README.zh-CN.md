@@ -6,11 +6,15 @@ Codex / ChatGPT 账户负载均衡与代理，提供用量追踪、仪表盘和 
 python oauth sqlalchemy dashboard load-balancer openai rate-limit api-proxy codex fastapi usage-tracking chatgpt opencode
 -->
 
-# codex-lb
+# gemini-lb
 
 ![codex-lb](docs/screenshots/banner.jpg)
 
 [English](./README.md) | **简体中文**
+
+本仓库基于 MIT 许可的 codex-lb，并增加 Gemini 网关功能。当前安装与兼容性说明请先阅读
+[Gemini 设置指南](docs/gemini.md)（英文）。下文保留上游 Codex 功能说明；其中的上游包和镜像
+不代表本仓库发布了对应的 Gemini 构建产物。
 
 > **文档站点（英文，权威版本）**: <https://soju06.github.io/codex-lb/> — 本页内容可能滞后，最新使用说明以英文文档站点为准。
 
